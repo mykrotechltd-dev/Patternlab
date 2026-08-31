@@ -127,7 +127,15 @@ type BodicePoints = {
   G: Pt; H: Pt; I: Pt; I2: Pt; J: Pt; K: Pt; K2: Pt; L: Pt; M: Pt; N: Pt; N2: Pt;
 };
 
-function computeFrontBodicePoints(m: Measurements): BodicePoints {
+type FrontBodiceResult = {
+  points: BodicePoints;
+  // Length of the front's own side seam (underarm to hem) — the back bodice
+  // below is built to share this exact value, so the two pieces' side seams
+  // match when sewn together rather than being independently approximated.
+  sideSeamLength: number;
+};
+
+function computeFrontBodicePoints(m: Measurements): FrontBodiceResult {
   const i = m.scale;
 
   const bustEase = EASE_ARRAY[m.bustFit][0];
@@ -213,7 +221,10 @@ function computeFrontBodicePoints(m: Measurements): BodicePoints {
   const N: Pt = { x: I.x - bDiff - x5, y: H.y - y5 };
   const N2: Pt = { ...N };
 
-  return { A, B, C, D, D2, E, E2, G, H, I, I2, J, K, K2, L, M, N, N2 };
+  return {
+    points: { A, B, C, D, D2, E, E2, G, H, I, I2, J, K, K2, L, M, N, N2 },
+    sideSeamLength: newSideLength,
+  };
 }
 
 const fmt = (n: number) => n.toFixed(2);
@@ -301,18 +312,164 @@ function boundingBox(p: BodicePoints) {
   return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
 }
 
-function standaloneSvg(paths: string[], bbox: { minX: number; maxX: number; minY: number; maxY: number }): string {
+type BBox = { minX: number; maxX: number; minY: number; maxY: number };
+
+function bboxSize(bbox: BBox, pad: number) {
+  return { width: bbox.maxX - bbox.minX + pad * 2, height: bbox.maxY - bbox.minY + pad * 2 };
+}
+
+const CANVAS_PAD = 16;
+
+function viewBoxOf(bbox: BBox) {
+  const minX = bbox.minX - CANVAS_PAD;
+  const minY = bbox.minY - CANVAS_PAD;
+  const { width, height } = bboxSize(bbox, CANVAS_PAD);
+  return { minX, minY, width, height, viewBox: `${fmt(minX)} ${fmt(minY)} ${fmt(width)} ${fmt(height)}` };
+}
+
+function standaloneSvg(pieces: { title: string; paths: string[]; bbox: BBox }[]): string {
   const pad = 16;
-  const minX = bbox.minX - pad;
-  const minY = bbox.minY - pad;
-  const width = bbox.maxX - bbox.minX + pad * 2;
-  const height = bbox.maxY - bbox.minY + pad * 2;
-  const pathTags = paths.map((d) => `  <path d="${d}" stroke="#1E2A47" stroke-width="2" fill="none" stroke-linecap="round" />`).join("\n");
+  const gap = 40;
+  const sizes = pieces.map((p) => bboxSize(p.bbox, pad));
+  const totalWidth = sizes.reduce((sum, s) => sum + s.width, 0) + gap * (pieces.length - 1);
+  const totalHeight = Math.max(...sizes.map((s) => s.height));
+
+  let xCursor = 0;
+  const groups = pieces
+    .map((piece, idx) => {
+      const size = sizes[idx]!;
+      // Each piece keeps its own path coordinates untouched; a translate
+      // moves its bounding box (plus padding) to sit at xCursor, so pieces
+      // never need their path strings renumbered to share one coordinate space.
+      const tx = xCursor - (piece.bbox.minX - pad);
+      const ty = -(piece.bbox.minY - pad);
+      xCursor += size.width + gap;
+      const pathTags = piece.paths
+        .map((d) => `    <path d="${d}" stroke="#1E2A47" stroke-width="2" fill="none" stroke-linecap="round" />`)
+        .join("\n");
+      return `  <g transform="translate(${fmt(tx)},${fmt(ty)})">\n    <title>${piece.title}</title>\n${pathTags}\n  </g>`;
+    })
+    .join("\n");
+
   return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(width)}pt" height="${fmt(height)}pt" viewBox="${fmt(minX)} ${fmt(minY)} ${fmt(width)} ${fmt(height)}">\n` +
-    `  <title>Front Bodice Block</title>\n${pathTags}\n</svg>\n`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(totalWidth)}pt" height="${fmt(totalHeight)}pt" viewBox="0 0 ${fmt(totalWidth)} ${fmt(totalHeight)}">\n` +
+    `${groups}\n</svg>\n`
   );
+}
+
+// ---------------------------------------------------------------------------
+// Back bodice — standard quarter-body draft (no source script for this one).
+//
+// Unlike the front block above, there's no Illustrator script to port here,
+// so this uses common quick-draft formulas rather than a precise method:
+//   - back neck width  ≈ bust/20 + 1.75in, back neck depth ≈ neck width / 3
+//   - shoulder run and armhole depth are shared with the front block, so the
+//     shoulder seam and armhole line up when the pieces are sewn together
+//   - the underarm-level half-width reuses the front's own "b" (bust quarter
+//     + ease), i.e. bust circumference is assumed to split evenly between
+//     front and back rather than measuring back width separately
+//   - the side seam length is passed in from the front block's own balanced
+//     calculation, so the two side seams match exactly
+//   - a single straight-leg waist dart (not curved) takes up most of the
+//     difference between the chest and waist quarters
+// Treat this as a starting draft, the same way the app's other basic blocks
+// are — not a substitute for a fitted back draft from real back measurements.
+// ---------------------------------------------------------------------------
+
+type BackBodicePoints = {
+  centerBackNeck: Pt;
+  neckSide: Pt;
+  shoulderTip: Pt;
+  underarm: Pt;
+  waistSide: Pt;
+  waistCenter: Pt;
+  dartLeft: Pt;
+  dartApex: Pt;
+  dartRight: Pt;
+};
+
+function computeBackBodicePoints(m: Measurements, sideSeamLength: number): BackBodicePoints {
+  const i = m.scale;
+
+  const bustEase = EASE_ARRAY[m.bustFit][0];
+  const shoulderEase = EASE_ARRAY[m.shoulderFit][1];
+  const waistEase = EASE_ARRAY[m.waistFit][3];
+
+  const b = (m.bust / 4) * i + bustEase * i; // underarm-level half-width, shared with the front block
+  const w = (m.waist / 4) * i + waistEase * i;
+  const s = (m.shoulder / 2) * i - shoulderEase * i; // shoulder seam run, shared with the front block
+  const sD = m.shoulderDepth * i;
+  const aDepth = armDepthFor(m.arm) * i;
+  const backLength = m.backBodiceLength * i;
+
+  const backNeckWidthIn = m.bust / 20 + 1.75;
+  const bw = backNeckWidthIn * i;
+  const bnd = (backNeckWidthIn / 3) * i;
+
+  const centerBackNeck: Pt = { x: 0, y: 0 };
+  const neckSide: Pt = { x: bw, y: bnd };
+  const shoulderTip: Pt = { x: bw + s, y: bnd + sD };
+  const underarm: Pt = { x: b, y: bnd + sD + aDepth };
+  const waistSide: Pt = { x: w, y: underarm.y + sideSeamLength };
+  const waistCenter: Pt = { x: 0, y: backLength };
+
+  // Interpolates the un-darted waist edge between center back and the side
+  // seam, so the dart can be cut into it at any point along that line.
+  const waistAt = (x: number): number => waistCenter.y + ((waistSide.y - waistCenter.y) * x) / w;
+
+  const dartWidth = Math.max(0, b - w) * 0.6;
+  const dartCenterX = w * 0.55;
+  const dartApexRise = backLength * 0.35;
+  const dartLeftX = dartCenterX - dartWidth / 2;
+  const dartRightX = dartCenterX + dartWidth / 2;
+  const dartLeft: Pt = { x: dartLeftX, y: waistAt(dartLeftX) };
+  const dartRight: Pt = { x: dartRightX, y: waistAt(dartRightX) };
+  const dartApex: Pt = { x: dartCenterX, y: (dartLeft.y + dartRight.y) / 2 - dartApexRise };
+
+  return { centerBackNeck, neckSide, shoulderTip, underarm, waistSide, waistCenter, dartLeft, dartApex, dartRight };
+}
+
+// One closed outline (unlike the front's five open segments) — the back
+// block has no source script dictating separate dart-leg paths, so the dart
+// is drawn as a plain V notch cut straight into the waist edge.
+function buildBackPath(p: BackBodicePoints): string {
+  const neckControl1: Pt = { x: 0, y: p.neckSide.y * 0.6 };
+  const neckControl2: Pt = { x: p.neckSide.x * 0.7, y: p.neckSide.y };
+
+  const armRun = p.underarm.x - p.shoulderTip.x;
+  const armDrop = p.underarm.y - p.shoulderTip.y;
+  const armControl1: Pt = { x: p.shoulderTip.x + armRun * 0.25, y: p.shoulderTip.y + armDrop * 0.35 };
+  const armControl2: Pt = { x: p.shoulderTip.x + armRun * 0.6, y: p.shoulderTip.y + armDrop * 0.8 };
+
+  return (
+    `M ${fmt(p.centerBackNeck.x)},${fmt(p.centerBackNeck.y)} ` +
+    `C ${fmt(neckControl1.x)},${fmt(neckControl1.y)} ${fmt(neckControl2.x)},${fmt(neckControl2.y)} ${fmt(p.neckSide.x)},${fmt(p.neckSide.y)} ` +
+    `L ${fmt(p.shoulderTip.x)},${fmt(p.shoulderTip.y)} ` +
+    `C ${fmt(armControl1.x)},${fmt(armControl1.y)} ${fmt(armControl2.x)},${fmt(armControl2.y)} ${fmt(p.underarm.x)},${fmt(p.underarm.y)} ` +
+    `L ${fmt(p.waistSide.x)},${fmt(p.waistSide.y)} ` +
+    `L ${fmt(p.dartRight.x)},${fmt(p.dartRight.y)} ` +
+    `L ${fmt(p.dartApex.x)},${fmt(p.dartApex.y)} ` +
+    `L ${fmt(p.dartLeft.x)},${fmt(p.dartLeft.y)} ` +
+    `L ${fmt(p.waistCenter.x)},${fmt(p.waistCenter.y)} Z`
+  );
+}
+
+function backLabeledPoints(p: BackBodicePoints): { label: string; pt: Pt }[] {
+  return [
+    { label: "CB", pt: p.centerBackNeck },
+    { label: "SH", pt: p.shoulderTip },
+    { label: "U", pt: p.underarm },
+    { label: "WS", pt: p.waistSide },
+    { label: "DA", pt: p.dartApex },
+  ];
+}
+
+function backBoundingBox(p: BackBodicePoints): BBox {
+  const pts = [p.centerBackNeck, p.neckSide, p.shoulderTip, p.underarm, p.waistSide, p.waistCenter, p.dartLeft, p.dartApex, p.dartRight];
+  const xs = pts.map((pt) => pt.x);
+  const ys = pts.map((pt) => pt.y);
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
 }
 
 // ---------------------------------------------------------------------------
@@ -378,23 +535,27 @@ export function FrontBodiceDashboard() {
   const set = <K extends keyof Measurements>(key: K, value: Measurements[K]) =>
     setM((prev) => ({ ...prev, [key]: value }));
 
-  const points = useMemo(() => toDisplayPoints(computeFrontBodicePoints(m)), [m]);
-  const paths = useMemo(() => buildPathSegments(points), [points]);
-  const bbox = useMemo(() => boundingBox(points), [points]);
+  const front = useMemo(() => computeFrontBodicePoints(m), [m]);
+  const frontPoints = useMemo(() => toDisplayPoints(front.points), [front]);
+  const frontPaths = useMemo(() => buildPathSegments(frontPoints), [frontPoints]);
+  const frontBbox = useMemo(() => boundingBox(frontPoints), [frontPoints]);
+  const frontView = viewBoxOf(frontBbox);
 
-  const pad = 16;
-  const minX = bbox.minX - pad;
-  const minY = bbox.minY - pad;
-  const width = bbox.maxX - bbox.minX + pad * 2;
-  const height = bbox.maxY - bbox.minY + pad * 2;
+  const backPoints = useMemo(() => computeBackBodicePoints(m, front.sideSeamLength), [m, front.sideSeamLength]);
+  const backPath = useMemo(() => buildBackPath(backPoints), [backPoints]);
+  const backBbox = useMemo(() => backBoundingBox(backPoints), [backPoints]);
+  const backView = viewBoxOf(backBbox);
 
   function handleExport() {
-    const svgString = standaloneSvg(paths, bbox);
+    const svgString = standaloneSvg([
+      { title: "Front Bodice Block", paths: frontPaths, bbox: frontBbox },
+      { title: "Back Bodice Block", paths: [backPath], bbox: backBbox },
+    ]);
     const blob = new Blob([svgString], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "front-bodice-block.svg";
+    a.download = "bodice-block.svg";
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -404,8 +565,8 @@ export function FrontBodiceDashboard() {
       {/* Sidebar */}
       <div className="space-y-6 rounded-2xl border border-brand-100 bg-white p-5 shadow-sm">
         <div>
-          <h2 className="font-serif text-lg font-semibold text-brand-900">Front Bodice Draft</h2>
-          <p className="mt-1 text-xs text-brand-400">Adjust measurements to redraft the block in real time.</p>
+          <h2 className="font-serif text-lg font-semibold text-brand-900">Front &amp; Back Bodice Draft</h2>
+          <p className="mt-1 text-xs text-brand-400">Adjust measurements to redraft both blocks in real time.</p>
         </div>
 
         <FieldGroup title="Primary circumferences">
@@ -465,22 +626,49 @@ export function FrontBodiceDashboard() {
       </div>
 
       {/* Canvas */}
-      <div className="flex h-[640px] items-center justify-center overflow-auto rounded-2xl border border-brand-100 bg-cream-50 p-6">
-        <svg width={width} height={height} viewBox={`${fmt(minX)} ${fmt(minY)} ${fmt(width)} ${fmt(height)}`}>
-          {paths.map((d, idx) => (
-            <path key={idx} d={d} stroke="#1E2A47" strokeWidth={2} fill="none" strokeLinecap="round" />
-          ))}
-          {showPoints &&
-            labeledPoints(points).map(({ label, pt }) => (
-              <g key={label}>
-                <circle cx={pt.x} cy={pt.y} r={4} fill="#C67C4E" />
-                <text x={pt.x + 7} y={pt.y - 7} fontSize={13} fill="#1E2A47" fontFamily="ui-sans-serif, system-ui, sans-serif">
-                  {label}
-                </text>
-              </g>
+      <div className="flex h-[640px] gap-4 overflow-auto rounded-2xl border border-brand-100 bg-cream-50 p-6">
+        <div className="flex flex-1 flex-col items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-brand-400">Front</span>
+          <svg width={frontView.width} height={frontView.height} viewBox={frontView.viewBox} className="max-w-full">
+            {frontPaths.map((d, idx) => (
+              <path key={idx} d={d} stroke="#1E2A47" strokeWidth={2} fill="none" strokeLinecap="round" />
             ))}
-        </svg>
+            {showPoints &&
+              labeledPoints(frontPoints).map(({ label, pt }) => (
+                <g key={label}>
+                  <circle cx={pt.x} cy={pt.y} r={4} fill="#C67C4E" />
+                  <text x={pt.x + 7} y={pt.y - 7} fontSize={13} fill="#1E2A47" fontFamily="ui-sans-serif, system-ui, sans-serif">
+                    {label}
+                  </text>
+                </g>
+              ))}
+          </svg>
+        </div>
+
+        <div className="w-px shrink-0 self-stretch bg-brand-100" />
+
+        <div className="flex flex-1 flex-col items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-brand-400">Back</span>
+          <svg width={backView.width} height={backView.height} viewBox={backView.viewBox} className="max-w-full">
+            <path d={backPath} stroke="#1E2A47" strokeWidth={2} fill="none" strokeLinecap="round" />
+            {showPoints &&
+              backLabeledPoints(backPoints).map(({ label, pt }) => (
+                <g key={label}>
+                  <circle cx={pt.x} cy={pt.y} r={4} fill="#C67C4E" />
+                  <text x={pt.x + 7} y={pt.y - 7} fontSize={13} fill="#1E2A47" fontFamily="ui-sans-serif, system-ui, sans-serif">
+                    {label}
+                  </text>
+                </g>
+              ))}
+          </svg>
+        </div>
       </div>
+
+      <p className="text-xs text-brand-400 lg:col-start-2">
+        The back block uses standard quick-draft formulas (bust/20 + 1.75in neck width, a single straight-leg waist
+        dart) rather than a source script like the front — its shoulder seam, armhole depth, and side seam length are
+        shared with the front block so the two fit together, but treat it as a starting draft.
+      </p>
     </div>
   );
 }
