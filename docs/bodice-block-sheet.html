@@ -1,0 +1,351 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bodice Block Sheet</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,440..620&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #edf1ef;
+    --panel: #fbfdfc;
+    --panel-line: #d7e1de;
+    --ink: #1e2624;
+    --ink-muted: #5c6a67;
+    --accent: #1f6f73;
+    --accent-soft: #e2f0ee;
+    --pin: #b8443a;
+    --pin-soft: #f8e6e3;
+    --grid-line: rgba(31, 111, 115, 0.09);
+    --canvas: #f5f8f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14181a;
+      --panel: #1b2123;
+      --panel-line: #2b3436;
+      --ink: #ece8de;
+      --ink-muted: #98a5a1;
+      --accent: #5cc7bd;
+      --accent-soft: rgba(92, 199, 189, 0.13);
+      --pin: #e2685c;
+      --pin-soft: rgba(226, 104, 92, 0.14);
+      --grid-line: rgba(92, 199, 189, 0.09);
+      --canvas: #171d1f;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14181a;
+    --panel: #1b2123;
+    --panel-line: #2b3436;
+    --ink: #ece8de;
+    --ink-muted: #98a5a1;
+    --accent: #5cc7bd;
+    --accent-soft: rgba(92, 199, 189, 0.13);
+    --pin: #e2685c;
+    --pin-soft: rgba(226, 104, 92, 0.14);
+    --grid-line: rgba(92, 199, 189, 0.09);
+    --canvas: #171d1f;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 48px 28px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  header {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-optical-sizing: auto;
+    font-weight: 560;
+    font-size: clamp(32px, 4.4vw, 46px);
+    margin: 0;
+    text-wrap: balance;
+  }
+  .dek {
+    font-size: 15px;
+    color: var(--ink-muted);
+    max-width: 62ch;
+  }
+  .dek code {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.92em;
+    background: var(--accent-soft);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+    color: var(--accent);
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .chip {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    border: 1px solid var(--panel-line);
+    background: var(--panel);
+    color: var(--ink);
+    padding: 5px 10px;
+    border-radius: 999px;
+    display: inline-flex;
+    gap: 6px;
+    align-items: baseline;
+  }
+  .chip b { color: var(--accent); font-weight: 600; }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
+    gap: 24px;
+    align-items: start;
+  }
+  @media (max-width: 860px) {
+    main { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+    border-radius: 14px;
+    padding: 20px 22px;
+  }
+  .card h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 560;
+    font-size: 17px;
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card h2 .n {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    color: var(--ink-muted);
+    font-weight: 400;
+  }
+
+  .canvas-card {
+    padding: 22px 22px 16px;
+  }
+  .canvas-frame {
+    background:
+      linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0 / 24px 24px,
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / 24px 24px,
+      var(--canvas);
+    border: 1px solid var(--panel-line);
+    border-radius: 10px;
+    padding: 12px;
+  }
+  .canvas-frame svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .piece {
+    fill: color-mix(in srgb, var(--accent) 7%, transparent);
+    stroke: var(--ink);
+    stroke-width: 1.4;
+  }
+  .pt { fill: var(--pin); }
+  .lbl { font: 8.5px "IBM Plex Mono", monospace; fill: var(--ink-muted); }
+  .piece-title { font: 600 13px "Fraunces", serif; fill: var(--ink); }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 12px 4px 4px;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 14px; height: 2px; background: var(--ink); display: inline-block; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pin); display: inline-block; }
+
+  .rail { display: flex; flex-direction: column; gap: 20px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { padding: 6px 0; text-align: left; border-bottom: 1px solid var(--panel-line); }
+  tr:last-child td { border-bottom: none; }
+  .field { color: var(--ink-muted); }
+  .val { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; }
+  .src { text-align: right; }
+  .badge {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    letter-spacing: 0.02em;
+    padding: 2px 7px;
+    border-radius: 999px;
+    display: inline-block;
+    white-space: nowrap;
+  }
+  .badge.measured { background: var(--accent-soft); color: var(--accent); }
+  .badge.formula { background: transparent; color: var(--ink-muted); border: 1px solid var(--panel-line); }
+  .badge.estimate { background: var(--pin-soft); color: var(--pin); }
+
+  .notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+  .notes li {
+    font-size: 13px;
+    color: var(--ink-muted);
+    padding-left: 16px;
+    border-left: 2px solid var(--panel-line);
+  }
+  .notes li b { color: var(--ink); font-weight: 600; }
+  .notes li.flag { border-left-color: var(--pin); }
+  .notes li.flag b { color: var(--pin); }
+
+  footer {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+    border-top: 1px solid var(--panel-line);
+    padding-top: 16px;
+  }
+  footer code { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Pattern Drafting Engine — draft output</div>
+    <h1>Basic Bodice Block</h1>
+    <p class="dek">
+      Back and front pieces drafted by <code>draftBodiceBlock()</code> from the five
+      measurements a customer record holds today — bust, waist, shoulder, neck, height.
+      The other five fields §1 of the formula spec calls "strictly required" are filled
+      in below, badged by how confident each one is.
+    </p>
+    <div class="chips">
+      <span class="chip">BUST <b>92</b> cm</span>
+      <span class="chip">WAIST <b>74</b> cm</span>
+      <span class="chip">SHOULDER <b>12.5</b> cm</span>
+      <span class="chip">NECK <b>37</b> cm</span>
+      <span class="chip">HEIGHT <b>166</b> cm</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card canvas-card">
+      <h2>Draft preview <span class="n">back_bodice · front_bodice</span></h2>
+      <div class="canvas-frame">
+        <svg viewBox="0 0 389 268" xmlns="http://www.w3.org/2000/svg">
+          <g transform="translate(24,20)">
+            <path d="M 0.00 0.00 Q 23.70 7.90 47.40 15.80 L 67.37 23.50 L 55.60 63.98 L 74.08 26.10 L 117.37 42.80 Q 122.46 107.56 146.25 168.00 L 137.25 244.02 L 136.25 244.02 L 125.00 201.00 L 113.75 244.02 L 0.00 244.02 L 0.00 0.00 Z" class="piece"/>
+            <path d="M 194.25 0.00 Q 216.45 25.20 238.65 50.40 L 300.84 77.40 Q 311.88 126.55 340.50 168.00 L 310.39 208.63 L 331.50 209.82 L 249.45 209.82 L 249.45 150.00 L 249.45 209.82 L 194.25 209.82 L 194.25 0.00 Z" class="piece"/>
+
+            <circle cx="0.00" cy="0.00" r="2.2" class="pt"/><text x="4" y="-5" class="lbl">back_nape</text>
+            <circle cx="0.00" cy="244.02" r="2.2" class="pt"/><text x="4" y="240" class="lbl">back_waist_cb</text>
+            <circle cx="0.00" cy="168.00" r="2.2" class="pt"/><text x="4" y="164" class="lbl">back_armhole_depth</text>
+            <circle cx="125.00" cy="168.00" r="2.2" class="pt"/><text x="129" y="164" class="lbl">back_width_point</text>
+            <circle cx="146.25" cy="168.00" r="2.2" class="pt"/><text x="150" y="164" class="lbl">back_side_seam_armhole</text>
+            <circle cx="137.25" cy="244.02" r="2.2" class="pt"/><text x="141" y="240" class="lbl">back_side_seam_waist</text>
+            <circle cx="47.40" cy="15.80" r="2.2" class="pt"/><text x="51" y="12" class="lbl">back_neck_point</text>
+            <circle cx="117.37" cy="42.80" r="2.2" class="pt"/><text x="121" y="39" class="lbl">back_shoulder_point</text>
+            <circle cx="67.37" cy="23.50" r="2.2" class="pt"/><text x="71" y="20" class="lbl">shoulder_dart_a</text>
+            <circle cx="74.08" cy="26.10" r="2.2" class="pt"/><text x="78" y="22" class="lbl">shoulder_dart_b</text>
+            <circle cx="55.60" cy="63.98" r="2.2" class="pt"/><text x="59.6" y="60" class="lbl">shoulder_dart_apex</text>
+            <circle cx="125.00" cy="201.00" r="2.2" class="pt"/><text x="129" y="197" class="lbl">waist_dart_apex</text>
+            <circle cx="113.75" cy="244.02" r="2.2" class="pt"/><text x="117.75" y="240" class="lbl">waist_dart_a</text>
+            <circle cx="136.25" cy="244.02" r="2.2" class="pt"/><text x="140.25" y="240" class="lbl">waist_dart_b</text>
+
+            <circle cx="194.25" cy="0.00" r="2.2" class="pt"/><text x="198.25" y="-5" class="lbl">front_neck_cf</text>
+            <circle cx="194.25" cy="209.82" r="2.2" class="pt"/><text x="198.25" y="206" class="lbl">front_waist_cf</text>
+            <circle cx="238.65" cy="50.40" r="2.2" class="pt"/><text x="242.65" y="46.4" class="lbl">front_neck_point</text>
+            <circle cx="300.84" cy="77.40" r="2.2" class="pt"/><text x="304.84" y="73.4" class="lbl">front_shoulder_point</text>
+            <circle cx="340.50" cy="168.00" r="2.2" class="pt"/><text x="344.5" y="164" class="lbl">front_side_seam</text>
+            <circle cx="331.50" cy="209.82" r="2.2" class="pt"/><text x="335.5" y="206" class="lbl">front_side_waist</text>
+            <circle cx="249.45" cy="132.00" r="2.6" class="pt"/><text x="253.45" y="128" class="lbl">bust_point</text>
+            <circle cx="310.39" cy="208.63" r="2.2" class="pt"/><text x="314.39" y="204.6" class="lbl">bust_dart_leg_b</text>
+            <circle cx="249.45" cy="150.00" r="2.2" class="pt"/><text x="253.45" y="146" class="lbl">waist_dart_apex</text>
+            <circle cx="249.45" cy="209.82" r="2.2" class="pt"/><text x="253.45" y="206" class="lbl">waist_dart_a≈b (0cm)</text>
+
+            <text x="73" y="-8" class="piece-title" text-anchor="middle">BACK</text>
+            <text x="267" y="-8" class="piece-title" text-anchor="middle">FRONT</text>
+          </g>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><span class="swatch"></span> seam / cutting line</span>
+        <span><span class="dot"></span> construction point</span>
+        <span>V-notches in the edge are darts — the wedge is excised before stitching</span>
+      </div>
+    </section>
+
+    <aside class="rail">
+      <section class="card">
+        <h2>Measurements <span class="n">10 fields</span></h2>
+        <table>
+          <tr><td class="field">bust</td><td class="val">92 cm</td><td class="src"><span class="badge measured">measured</span></td></tr>
+          <tr><td class="field">waist</td><td class="val">74 cm</td><td class="src"><span class="badge measured">measured</span></td></tr>
+          <tr><td class="field">shoulder_len</td><td class="val">12.5 cm</td><td class="src"><span class="badge measured">measured</span></td></tr>
+          <tr><td class="field">neck_size</td><td class="val">37 cm</td><td class="src"><span class="badge measured">measured</span></td></tr>
+          <tr><td class="field">height</td><td class="val">166 cm</td><td class="src"><span class="badge measured">measured</span></td></tr>
+          <tr><td class="field">back_width</td><td class="val">20.83 cm</td><td class="src"><span class="badge formula">§4.2 formula</span></td></tr>
+          <tr><td class="field">armhole_depth</td><td class="val">28.0 cm</td><td class="src"><span class="badge formula">§2.3 formula</span></td></tr>
+          <tr><td class="field">nape_to_waist</td><td class="val">40.67 cm</td><td class="src"><span class="badge estimate">engine est.</span></td></tr>
+          <tr><td class="field">front_shoulder_to_waist</td><td class="val">43.37 cm</td><td class="src"><span class="badge estimate">engine est.</span></td></tr>
+          <tr><td class="field">bust_point_sep</td><td class="val">18.4 cm</td><td class="src"><span class="badge estimate">engine est.</span></td></tr>
+          <tr><td class="field">shoulder_to_bust</td><td class="val">22.0 cm</td><td class="src"><span class="badge estimate">engine est.</span></td></tr>
+        </table>
+      </section>
+
+      <section class="card">
+        <h2>Construction values</h2>
+        <table>
+          <tr><td class="field">ease, bust / waist</td><td class="val" colspan="2">5.5 / 2.5 cm</td></tr>
+          <tr><td class="field">back shoulder dart</td><td class="val" colspan="2">1.2 cm</td></tr>
+          <tr><td class="field">back waist dart</td><td class="val" colspan="2">3.75 cm</td></tr>
+          <tr><td class="field">bust dart (heuristic)</td><td class="val" colspan="2">8.43 cm</td></tr>
+          <tr><td class="field">front waist dart</td><td class="val" colspan="2"><b style="color:var(--pin)">0 cm</b></td></tr>
+        </table>
+      </section>
+
+      <section class="card">
+        <h2>Engineering notes</h2>
+        <ul class="notes">
+          <li><b>Two circular formulas fixed.</b> §4.6 and §5.7 each defined a dart intake in terms of itself. Total bust→waist reduction is now computed independently; each dart intake is that total minus what's already spent elsewhere.</li>
+          <li class="flag"><b>Bust dart has no real formula.</b> §5.5 bottoms out in a chest measurement this app doesn't collect. It's estimated from the bust–waist differential, clamped to the spec's 8–11cm range, and overridable per customer via <code style="font-family:'IBM Plex Mono',monospace">eases.bustDartIntake</code>.</li>
+          <li><b>Front waist dart = 0cm here</b> — not a bug. The bust-dart estimate above already exceeds the available front reduction at this size, so no separate waist dart is needed.</li>
+          <li><b>front_shoulder_to_waist's CF conversion is approximate</b> — §5.1's offset term was undefined in the spec; a real center-front tape reading will beat this default.</li>
+          <li><b>Regression tests pin current output, not a hand-drafted reference</b> — no published block was available to validate against. Treat all "engine est." values as provisional.</li>
+        </ul>
+      </section>
+    </aside>
+  </main>
+
+  <footer>
+    src/engine/{back,front,defaults,geom}.ts · 20 tests passing · see README.md for the full formula reference
+  </footer>
+</div>
+
+</body>
+</html>
