@@ -218,10 +218,35 @@ function computeFrontBodicePoints(m: Measurements): BodicePoints {
 
 const fmt = (n: number) => n.toFixed(2);
 
+// computeFrontBodicePoints() above is a deliberately unmodified port of the
+// script's math, so it inherits Illustrator's scripting coordinate system —
+// Y-up (larger Y is higher on the page). SVG is Y-down (larger Y is lower),
+// so rendering those points directly draws the block upside down. This flips
+// every point once, here, for display, rather than baking the flip into the
+// geometry above and losing the 1:1 correspondence with the source script.
+function flip(pt: Pt): Pt {
+  return { x: pt.x, y: -pt.y };
+}
+
+function toDisplayPoints(p: BodicePoints): BodicePoints {
+  return {
+    A: flip(p.A), B: flip(p.B), C: flip(p.C), D: flip(p.D), D2: flip(p.D2),
+    E: flip(p.E), E2: flip(p.E2), G: flip(p.G), H: flip(p.H), I: flip(p.I),
+    I2: flip(p.I2), J: flip(p.J), K: flip(p.K), K2: flip(p.K2), L: flip(p.L),
+    M: flip(p.M), N: flip(p.N), N2: flip(p.N2),
+  };
+}
+
 // The five open path segments the source script draws (myLine1..myLine5),
 // split exactly where the script splits them — the gaps between segments
 // are the bust dart (E→B→I, then I2→H→N) and waist dart (K→L→N2, then D2→K2)
 // wedges: real cut lines, not a rendering bug.
+//
+// `p` here is already display-space (post toDisplayPoints/flip). The
+// neckline and side-seam curve handles only ever offset X, so their sign is
+// unaffected by the flip; the bust-dart and waist-dart handles also offset Y,
+// so that offset's sign is inverted below to match the flipped anchors —
+// otherwise those two curves alone would bulge the wrong way.
 function buildPathSegments(p: BodicePoints) {
   const necklineToShoulder =
     `M ${fmt(p.D.x)},${fmt(p.D.y)} L ${fmt(p.G.x)},${fmt(p.G.y)} ` +
@@ -229,14 +254,14 @@ function buildPathSegments(p: BodicePoints) {
 
   const shoulderToBustDartUpper =
     `M ${fmt(p.E2.x)},${fmt(p.E2.y)} L ${fmt(p.B.x)},${fmt(p.B.y)} ` +
-    `C ${fmt(p.B.x)},${fmt(p.B.y)} ${fmt(p.I.x + CURVE_HANDLE.bustDart)},${fmt(p.I.y + CURVE_HANDLE.bustDart)} ${fmt(p.I.x)},${fmt(p.I.y)}`;
+    `C ${fmt(p.B.x)},${fmt(p.B.y)} ${fmt(p.I.x + CURVE_HANDLE.bustDart)},${fmt(p.I.y - CURVE_HANDLE.bustDart)} ${fmt(p.I.x)},${fmt(p.I.y)}`;
 
   const bustDartLowerToUnderarm =
     `M ${fmt(p.I2.x)},${fmt(p.I2.y)} L ${fmt(p.H.x)},${fmt(p.H.y)} L ${fmt(p.N.x)},${fmt(p.N.y)}`;
 
   const hemToWaistDartToUnderarm =
     `M ${fmt(p.K.x)},${fmt(p.K.y)} L ${fmt(p.L.x)},${fmt(p.L.y)} ` +
-    `C ${fmt(p.L.x)},${fmt(p.L.y)} ${fmt(p.N2.x - CURVE_HANDLE.waistDart)},${fmt(p.N2.y + CURVE_HANDLE.waistDart)} ${fmt(p.N2.x)},${fmt(p.N2.y)}`;
+    `C ${fmt(p.L.x)},${fmt(p.L.y)} ${fmt(p.N2.x - CURVE_HANDLE.waistDart)},${fmt(p.N2.y - CURVE_HANDLE.waistDart)} ${fmt(p.N2.x)},${fmt(p.N2.y)}`;
 
   const sideSeamCurve =
     `M ${fmt(p.D2.x)},${fmt(p.D2.y)} ` +
@@ -261,12 +286,14 @@ function labeledPoints(p: BodicePoints): { label: string; pt: Pt }[] {
   ];
 }
 
+// `p` is display-space, same as buildPathSegments() — see the note there on
+// why the bust-dart/waist-dart handles negate their Y offset and the others don't.
 function boundingBox(p: BodicePoints) {
   const extentPoints: Pt[] = [
     p.D, p.G, p.E, { x: p.E.x - CURVE_HANDLE.neckline, y: p.E.y },
-    p.B, p.I, { x: p.I.x + CURVE_HANDLE.bustDart, y: p.I.y + CURVE_HANDLE.bustDart },
+    p.B, p.I, { x: p.I.x + CURVE_HANDLE.bustDart, y: p.I.y - CURVE_HANDLE.bustDart },
     p.H, p.N, p.K, p.L,
-    { x: p.N2.x - CURVE_HANDLE.waistDart, y: p.N2.y + CURVE_HANDLE.waistDart },
+    { x: p.N2.x - CURVE_HANDLE.waistDart, y: p.N2.y - CURVE_HANDLE.waistDart },
     p.N2, p.D2, { x: p.K2.x + CURVE_HANDLE.sideSeam, y: p.K2.y }, p.K2,
   ];
   const xs = extentPoints.map((pt) => pt.x);
@@ -351,7 +378,7 @@ export function FrontBodiceDashboard() {
   const set = <K extends keyof Measurements>(key: K, value: Measurements[K]) =>
     setM((prev) => ({ ...prev, [key]: value }));
 
-  const points = useMemo(() => computeFrontBodicePoints(m), [m]);
+  const points = useMemo(() => toDisplayPoints(computeFrontBodicePoints(m)), [m]);
   const paths = useMemo(() => buildPathSegments(points), [points]);
   const bbox = useMemo(() => boundingBox(points), [points]);
 
