@@ -359,114 +359,128 @@ function standaloneSvg(pieces: { title: string; paths: string[]; bbox: BBox }[])
 }
 
 // ---------------------------------------------------------------------------
-// Back bodice — standard quarter-body draft (no source script for this one).
+// Back bodice — direct port of a second ExtendScript, supplied separately
+// from the front one. It reuses this file's b/w (bust/waist quarters) and
+// aDepth exactly as the front computes them, and its own back neck width is
+// derived from shoulderLength (shoulder/3) rather than any new input — same
+// "port faithfully, flag anything odd" treatment as the front block:
 //
-// Unlike the front block above, there's no Illustrator script to port here,
-// so this uses common quick-draft formulas rather than a precise method:
-//   - back neck width  ≈ bust/20 + 1.75in, back neck depth ≈ neck width / 3
-//   - shoulder run and armhole depth are shared with the front block, so the
-//     shoulder seam and armhole line up when the pieces are sewn together
-//   - the underarm-level half-width reuses the front's own "b" (bust quarter
-//     + ease), i.e. bust circumference is assumed to split evenly between
-//     front and back rather than measuring back width separately
-//   - the side seam length is passed in from the front block's own balanced
-//     calculation, so the two side seams match exactly
-//   - a single straight-leg waist dart (not curved) takes up most of the
-//     difference between the chest and waist quarters
-// Treat this as a starting draft, the same way the app's other basic blocks
-// are — not a substitute for a fitted back draft from real back measurements.
-// ---------------------------------------------------------------------------
-
+//   - unlike the front's dartExtensionFor(), this script's own dart-width
+//     thresholds (calculateBackDartWidth) ARE scaled by `i` correctly, so it
+//     doesn't have the front's "always lands in the last bucket" quirk
+//   - the source script draws several extra reference lines (a duplicate
+//     center-back line, a bust-level line, a duplicate waist line, a
+//     duplicate straight shoulder line, and a dart-centerline) that either
+//     retrace edges already in the main outline or aren't part of the cut
+//     line — those aren't drawn here, only the outline and the dart notch
+//   - it does NOT tie its side seam to the front block's own side-seam
+//     length (unlike the standard-formula version this replaces), so the
+//     two side seams aren't guaranteed to match — both lengths are shown
+//     under the canvas so you can true them up by hand if they diverge
 type BackBodicePoints = {
-  centerBackNeck: Pt;
-  neckSide: Pt;
-  shoulderTip: Pt;
-  underarm: Pt;
-  waistSide: Pt;
-  waistCenter: Pt;
-  dartLeft: Pt;
-  dartApex: Pt;
-  dartRight: Pt;
+  A: Pt; B: Pt; C: Pt; D: Pt; F: Pt; G: Pt; H: Pt; I: Pt; J: Pt;
+  neckControl1: Pt; neckControl2: Pt; armControl1: Pt; armControl2: Pt;
 };
 
-function computeBackBodicePoints(m: Measurements, sideSeamLength: number): BackBodicePoints {
+// Unlike the front's dartExtensionFor(), these thresholds are scaled by `i`
+// in the source script (1*i, 2*i, ...), so this behaves correctly across
+// realistic measurements instead of always landing in the last bucket.
+function calculateBackDartWidth(bustWidthScaled: number, waistWidthScaled: number, i: number): number {
+  const diff = bustWidthScaled - waistWidthScaled;
+  if (diff <= 0) return 0;
+  if (diff < 1 * i) return 0.5 * i;
+  if (diff < 2 * i) return 0.75 * i;
+  if (diff < 3 * i) return 1.0 * i;
+  if (diff < 4 * i) return 1.25 * i;
+  return 1.5 * i;
+}
+
+function computeBackBodicePoints(m: Measurements): BackBodicePoints {
   const i = m.scale;
 
   const bustEase = EASE_ARRAY[m.bustFit][0];
-  const shoulderEase = EASE_ARRAY[m.shoulderFit][1];
   const waistEase = EASE_ARRAY[m.waistFit][3];
-
-  const b = (m.bust / 4) * i + bustEase * i; // underarm-level half-width, shared with the front block
+  const b = (m.bust / 4) * i + bustEase * i;
   const w = (m.waist / 4) * i + waistEase * i;
-  const s = (m.shoulder / 2) * i - shoulderEase * i; // shoulder seam run, shared with the front block
-  const sD = m.shoulderDepth * i;
   const aDepth = armDepthFor(m.arm) * i;
+
+  const backNeckDepthIn = 1.0;
+  const backNeckWidthIn = m.shoulderLength / 3;
+  const backNeckD = backNeckDepthIn * i;
+  const backNeckW = backNeckWidthIn * i;
+  const backShoulderDrop = m.shoulderDepth * i;
+  const backShoulderLength = m.shoulderLength * i;
   const backLength = m.backBodiceLength * i;
+  const backArmDepth = aDepth;
+  const backBustWidth = b;
+  const backWaistWidth = w;
+  const backDartWidth = calculateBackDartWidth(backBustWidth, backWaistWidth, i);
 
-  const backNeckWidthIn = m.bust / 20 + 1.75;
-  const bw = backNeckWidthIn * i;
-  const bnd = (backNeckWidthIn / 3) * i;
+  const A: Pt = { x: 0, y: backLength }; // center-back waist
+  const B: Pt = { x: 0, y: 0 }; // center-back neck
+  const C: Pt = { x: backNeckW, y: backNeckD }; // back neck/shoulder start
 
-  const centerBackNeck: Pt = { x: 0, y: 0 };
-  const neckSide: Pt = { x: bw, y: bnd };
-  const shoulderTip: Pt = { x: bw + s, y: bnd + sD };
-  const underarm: Pt = { x: b, y: bnd + sD + aDepth };
-  const waistSide: Pt = { x: w, y: underarm.y + sideSeamLength };
-  const waistCenter: Pt = { x: 0, y: backLength };
+  const shoulderHorizontalBack = shortSide(backShoulderLength, backShoulderDrop);
+  const D: Pt = { x: C.x + shoulderHorizontalBack, y: C.y - backShoulderDrop }; // shoulder tip
 
-  // Interpolates the un-darted waist edge between center back and the side
-  // seam, so the dart can be cut into it at any point along that line.
-  const waistAt = (x: number): number => waistCenter.y + ((waistSide.y - waistCenter.y) * x) / w;
+  const F: Pt = { x: backBustWidth, y: backArmDepth }; // side bust point (E, the CB armhole-depth point, is only a reference for this and isn't drawn)
+  const G: Pt = { x: backWaistWidth, y: A.y }; // side waist
 
-  const dartWidth = Math.max(0, b - w) * 0.6;
-  const dartCenterX = w * 0.55;
-  const dartApexRise = backLength * 0.35;
-  const dartLeftX = dartCenterX - dartWidth / 2;
-  const dartRightX = dartCenterX + dartWidth / 2;
-  const dartLeft: Pt = { x: dartLeftX, y: waistAt(dartLeftX) };
-  const dartRight: Pt = { x: dartRightX, y: waistAt(dartRightX) };
-  const dartApex: Pt = { x: dartCenterX, y: (dartLeft.y + dartRight.y) / 2 - dartApexRise };
+  const backDartPlacement = (m.bustSpan / 2) * i;
+  const dartCenterX = backDartPlacement;
+  const dartHalf = backDartWidth / 2;
+  const H: Pt = { x: dartCenterX - dartHalf, y: A.y };
+  const I: Pt = { x: dartCenterX + dartHalf, y: A.y };
+  const backDartPointDepth = 3 * i;
+  const J: Pt = { x: dartCenterX, y: backArmDepth - backDartPointDepth };
 
-  return { centerBackNeck, neckSide, shoulderTip, underarm, waistSide, waistCenter, dartLeft, dartApex, dartRight };
+  const armControl1: Pt = { x: D.x + shoulderHorizontalBack * 0.2, y: D.y + backArmDepth * 0.3 };
+  const armControl2: Pt = { x: F.x - backBustWidth * 0.1, y: F.y - backArmDepth * 0.2 };
+  const neckControl1: Pt = { x: B.x, y: B.y + backNeckD * 0.5 };
+  const neckControl2: Pt = { x: C.x - backNeckW * 0.2, y: C.y };
+
+  return { A, B, C, D, F, G, H, I, J, neckControl1, neckControl2, armControl1, armControl2 };
 }
 
-// One closed outline (unlike the front's five open segments) — the back
-// block has no source script dictating separate dart-leg paths, so the dart
-// is drawn as a plain V notch cut straight into the waist edge.
-function buildBackPath(p: BackBodicePoints): string {
-  const neckControl1: Pt = { x: 0, y: p.neckSide.y * 0.6 };
-  const neckControl2: Pt = { x: p.neckSide.x * 0.7, y: p.neckSide.y };
+// Unlike the front block, this one is NOT flipped for display. Both scripts
+// share the same "assumes an existing document/variables" framing, so the
+// same Y-up correction was tried here first — but rendering it turned the
+// piece upside down (waist at the top, shoulder at the bottom), confirmed by
+// screenshot. Rendering the raw coordinates directly produces a correctly
+// oriented back piece, so this script's Y axis was evidently authored
+// Y-down to begin with (its own comments say so), unlike the front's.
+//
+// `p` below is used as computed, no transform needed. The outline is one
+// continuous closed path (B→C→D→F→G→A→close), matching the four curves +
+// two straight edges the source script's point/handle assignments produce.
+function buildBackPaths(p: BackBodicePoints): { outline: string; dart: string } {
+  const outline =
+    `M ${fmt(p.B.x)},${fmt(p.B.y)} ` +
+    `C ${fmt(p.B.x)},${fmt(p.B.y)} ${fmt(p.neckControl2.x)},${fmt(p.neckControl2.y)} ${fmt(p.C.x)},${fmt(p.C.y)} ` +
+    `C ${fmt(p.neckControl1.x)},${fmt(p.neckControl1.y)} ${fmt(p.D.x)},${fmt(p.D.y)} ${fmt(p.D.x)},${fmt(p.D.y)} ` +
+    `C ${fmt(p.D.x)},${fmt(p.D.y)} ${fmt(p.armControl2.x)},${fmt(p.armControl2.y)} ${fmt(p.F.x)},${fmt(p.F.y)} ` +
+    `C ${fmt(p.armControl1.x)},${fmt(p.armControl1.y)} ${fmt(p.G.x)},${fmt(p.G.y)} ${fmt(p.G.x)},${fmt(p.G.y)} ` +
+    `L ${fmt(p.A.x)},${fmt(p.A.y)} Z`;
 
-  const armRun = p.underarm.x - p.shoulderTip.x;
-  const armDrop = p.underarm.y - p.shoulderTip.y;
-  const armControl1: Pt = { x: p.shoulderTip.x + armRun * 0.25, y: p.shoulderTip.y + armDrop * 0.35 };
-  const armControl2: Pt = { x: p.shoulderTip.x + armRun * 0.6, y: p.shoulderTip.y + armDrop * 0.8 };
+  const dart = `M ${fmt(p.H.x)},${fmt(p.H.y)} L ${fmt(p.J.x)},${fmt(p.J.y)} L ${fmt(p.I.x)},${fmt(p.I.y)}`;
 
-  return (
-    `M ${fmt(p.centerBackNeck.x)},${fmt(p.centerBackNeck.y)} ` +
-    `C ${fmt(neckControl1.x)},${fmt(neckControl1.y)} ${fmt(neckControl2.x)},${fmt(neckControl2.y)} ${fmt(p.neckSide.x)},${fmt(p.neckSide.y)} ` +
-    `L ${fmt(p.shoulderTip.x)},${fmt(p.shoulderTip.y)} ` +
-    `C ${fmt(armControl1.x)},${fmt(armControl1.y)} ${fmt(armControl2.x)},${fmt(armControl2.y)} ${fmt(p.underarm.x)},${fmt(p.underarm.y)} ` +
-    `L ${fmt(p.waistSide.x)},${fmt(p.waistSide.y)} ` +
-    `L ${fmt(p.dartRight.x)},${fmt(p.dartRight.y)} ` +
-    `L ${fmt(p.dartApex.x)},${fmt(p.dartApex.y)} ` +
-    `L ${fmt(p.dartLeft.x)},${fmt(p.dartLeft.y)} ` +
-    `L ${fmt(p.waistCenter.x)},${fmt(p.waistCenter.y)} Z`
-  );
+  return { outline, dart };
 }
 
 function backLabeledPoints(p: BackBodicePoints): { label: string; pt: Pt }[] {
   return [
-    { label: "CB", pt: p.centerBackNeck },
-    { label: "SH", pt: p.shoulderTip },
-    { label: "U", pt: p.underarm },
-    { label: "WS", pt: p.waistSide },
-    { label: "DA", pt: p.dartApex },
+    { label: "B", pt: p.B },
+    { label: "C", pt: p.C },
+    { label: "D", pt: p.D },
+    { label: "F", pt: p.F },
+    { label: "G", pt: p.G },
+    { label: "A", pt: p.A },
+    { label: "J", pt: p.J },
   ];
 }
 
 function backBoundingBox(p: BackBodicePoints): BBox {
-  const pts = [p.centerBackNeck, p.neckSide, p.shoulderTip, p.underarm, p.waistSide, p.waistCenter, p.dartLeft, p.dartApex, p.dartRight];
+  const pts = [p.A, p.B, p.C, p.D, p.F, p.G, p.H, p.I, p.J, p.neckControl1, p.neckControl2, p.armControl1, p.armControl2];
   const xs = pts.map((pt) => pt.x);
   const ys = pts.map((pt) => pt.y);
   return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
@@ -541,15 +555,28 @@ export function FrontBodiceDashboard() {
   const frontBbox = useMemo(() => boundingBox(frontPoints), [frontPoints]);
   const frontView = viewBoxOf(frontBbox);
 
-  const backPoints = useMemo(() => computeBackBodicePoints(m, front.sideSeamLength), [m, front.sideSeamLength]);
-  const backPath = useMemo(() => buildBackPath(backPoints), [backPoints]);
+  const backRaw = useMemo(() => computeBackBodicePoints(m), [m]);
+  const backPoints = backRaw; // not flipped — see the note above buildBackPaths()
+  const backPaths = useMemo(() => buildBackPaths(backPoints), [backPoints]);
   const backBbox = useMemo(() => backBoundingBox(backPoints), [backPoints]);
   const backView = viewBoxOf(backBbox);
+
+  // Diagnostic only — this script doesn't tie its side seam to the front
+  // block's, so the two lengths are surfaced rather than silently forced
+  // to match (see the comment above computeBackBodicePoints()).
+  const frontSideSeamIn = front.sideSeamLength / m.scale;
+  const backSideSeamIn = Math.hypot(backRaw.F.x - backRaw.G.x, backRaw.F.y - backRaw.G.y) / m.scale;
+
+  // The dart apex is placed a fixed 3in above the armhole depth regardless of
+  // back bodice length, so at shorter lengths (or a shallow armhole) the dart
+  // can end up spanning most of the piece — surfaced rather than silently capped.
+  const backDartLengthIn = Math.hypot(backRaw.J.x - backRaw.H.x, backRaw.J.y - backRaw.H.y) / m.scale;
+  const backDartIsLong = backDartLengthIn > m.backBodiceLength * 0.5;
 
   function handleExport() {
     const svgString = standaloneSvg([
       { title: "Front Bodice Block", paths: frontPaths, bbox: frontBbox },
-      { title: "Back Bodice Block", paths: [backPath], bbox: backBbox },
+      { title: "Back Bodice Block", paths: [backPaths.outline, backPaths.dart], bbox: backBbox },
     ]);
     const blob = new Blob([svgString], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
@@ -650,7 +677,8 @@ export function FrontBodiceDashboard() {
         <div className="flex flex-1 flex-col items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-400">Back</span>
           <svg width={backView.width} height={backView.height} viewBox={backView.viewBox} className="max-w-full">
-            <path d={backPath} stroke="#1E2A47" strokeWidth={2} fill="none" strokeLinecap="round" />
+            <path d={backPaths.outline} stroke="#1E2A47" strokeWidth={2} fill="none" strokeLinecap="round" />
+            <path d={backPaths.dart} stroke="#1E2A47" strokeWidth={2} fill="none" strokeLinecap="round" />
             {showPoints &&
               backLabeledPoints(backPoints).map(({ label, pt }) => (
                 <g key={label}>
@@ -665,9 +693,11 @@ export function FrontBodiceDashboard() {
       </div>
 
       <p className="text-xs text-brand-400 lg:col-start-2">
-        The back block uses standard quick-draft formulas (bust/20 + 1.75in neck width, a single straight-leg waist
-        dart) rather than a source script like the front — its shoulder seam, armhole depth, and side seam length are
-        shared with the front block so the two fit together, but treat it as a starting draft.
+        Side seam — front: {frontSideSeamIn.toFixed(2)}in, back: {backSideSeamIn.toFixed(2)}in.
+        {Math.abs(frontSideSeamIn - backSideSeamIn) > 0.1
+          ? " These don't match at the current measurements — true up the longer edge by hand before cutting."
+          : " These match closely."}
+        {backDartIsLong && ` Back waist dart is ${backDartLengthIn.toFixed(2)}in long relative to a ${m.backBodiceLength}in back length — check it before cutting.`}
       </p>
     </div>
   );
