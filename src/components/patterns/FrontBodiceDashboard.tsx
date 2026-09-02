@@ -97,6 +97,37 @@ function shortSide(hypotenuse: number, leg: number): number {
   return Math.sqrt(hypotenuse * hypotenuse - leg * leg);
 }
 
+// Both source scripts leave the armhole's two "corner" endpoints (front's E
+// and K; back's E1 and O) as plain corner points — a zero-length handle on
+// the side that touches the curve. That's fine for a straight-line-only
+// path, but here it means the curve's tangent at that endpoint isn't
+// controlled at all, so it can visibly kink against the straight seam line
+// running into it (F->E, or K->N) instead of flowing into it. These two
+// give that endpoint a real handle instead, aimed along the adjacent
+// straight segment's own direction so the curve continues it smoothly —
+// length scaled to a fraction of the curve's own chord so it looks
+// proportionate at any body size, same fraction (0.3) the file's other
+// curve handles already use.
+const SMOOTH_HANDLE_FRACTION = 0.3;
+
+// Outgoing handle for a curve that starts at `anchor`, arriving via a
+// straight line from `prevPoint` — continues that line's direction past
+// `anchor`, scaled against the curve's other endpoint `chordTo`.
+function smoothHandleOut(anchor: Pt, prevPoint: Pt, chordTo: Pt): Pt {
+  const dir = angleBetween(prevPoint, anchor);
+  const len = distance(anchor, chordTo) * SMOOTH_HANDLE_FRACTION;
+  return pointAtAngle(anchor, dir, len);
+}
+
+// Incoming handle for a curve that ends at `anchor`, continuing on via a
+// straight line to `nextPoint` — sits behind `anchor` on the reverse of that
+// line's direction, so the curve's tangent arrives already aimed that way.
+function smoothHandleIn(anchor: Pt, nextPoint: Pt, chordFrom: Pt): Pt {
+  const dir = angleBetween(anchor, nextPoint);
+  const len = distance(anchor, chordFrom) * SMOOTH_HANDLE_FRACTION;
+  return pointAtAngle(anchor, dir, -len);
+}
+
 const fmt = (n: number) => n.toFixed(2);
 
 type BBox = { minX: number; maxX: number; minY: number; maxY: number };
@@ -233,6 +264,11 @@ function frontCurveHandles(p: FrontBodicePoints) {
     fLeft: { x: p.F.x + (p.A.x - p.F.x) * 0.55, y: p.F.y },
     qLeft: { x: p.Q.x, y: p.Q.y + (p.E.y - p.Q.y) * 0.3 },
     qRight: { x: p.Q.x, y: p.Q.y - (p.Q.y - p.K.y) * 0.3 },
+    // Armhole endpoints — see smoothHandleOut/In above. eRight continues the
+    // F->E shoulder line's own direction past E; kLeft anticipates the K->N
+    // side-seam line's direction, arriving already aimed that way.
+    eRight: smoothHandleOut(p.E, p.F, p.Q),
+    kLeft: smoothHandleIn(p.K, p.N, p.Q),
   };
 }
 
@@ -243,13 +279,13 @@ function frontCurveHandles(p: FrontBodicePoints) {
 // second, separate "internal dart line" from H to J1 — that retraces an edge
 // already in this outline exactly, so it isn't drawn again.
 function buildFrontPath(p: FrontBodicePoints): string {
-  const { cRight, fLeft, qLeft, qRight } = frontCurveHandles(p);
+  const { cRight, fLeft, qLeft, qRight, eRight, kLeft } = frontCurveHandles(p);
   return (
     `M ${fmt(p.C.x)},${fmt(p.C.y)} ` +
     `C ${fmt(cRight.x)},${fmt(cRight.y)} ${fmt(fLeft.x)},${fmt(fLeft.y)} ${fmt(p.F.x)},${fmt(p.F.y)} ` +
     `L ${fmt(p.E.x)},${fmt(p.E.y)} ` +
-    `C ${fmt(p.E.x)},${fmt(p.E.y)} ${fmt(qLeft.x)},${fmt(qLeft.y)} ${fmt(p.Q.x)},${fmt(p.Q.y)} ` +
-    `C ${fmt(qRight.x)},${fmt(qRight.y)} ${fmt(p.K.x)},${fmt(p.K.y)} ${fmt(p.K.x)},${fmt(p.K.y)} ` +
+    `C ${fmt(eRight.x)},${fmt(eRight.y)} ${fmt(qLeft.x)},${fmt(qLeft.y)} ${fmt(p.Q.x)},${fmt(p.Q.y)} ` +
+    `C ${fmt(qRight.x)},${fmt(qRight.y)} ${fmt(kLeft.x)},${fmt(kLeft.y)} ${fmt(p.K.x)},${fmt(p.K.y)} ` +
     `L ${fmt(p.N.x)},${fmt(p.N.y)} ` +
     `L ${fmt(p.P.x)},${fmt(p.P.y)} ` +
     `L ${fmt(p.H.x)},${fmt(p.H.y)} ` +
@@ -267,8 +303,8 @@ function frontLabeledPoints(p: FrontBodicePoints): { label: string; pt: Pt }[] {
 }
 
 function frontBoundingBox(p: FrontBodicePoints): BBox {
-  const { cRight, fLeft, qLeft, qRight } = frontCurveHandles(p);
-  return bboxOfPoints([p.C, p.F, p.E, p.Q, p.K, p.N, p.P, p.H, p.J1, p.B, cRight, fLeft, qLeft, qRight]);
+  const { cRight, fLeft, qLeft, qRight, eRight, kLeft } = frontCurveHandles(p);
+  return bboxOfPoints([p.C, p.F, p.E, p.Q, p.K, p.N, p.P, p.H, p.J1, p.B, cRight, fLeft, qLeft, qRight, eRight, kLeft]);
 }
 
 // ---------------------------------------------------------------------------
@@ -399,17 +435,23 @@ function toBackDisplayPoints(p: BackBodicePoints): BackBodicePoints {
 }
 
 // Same "linear interpolations survive the flip with no sign correction"
-// property as the front block — see frontCurveHandles().
-function backCurveHandles(p: BackBodicePoints) {
+// property as the front block — see frontCurveHandles(). `hasShoulderDart`
+// changes which point the shoulder line actually arrives at E1 from (P2 when
+// the dart is on, F when it's off), which e1Right needs to aim its handle correctly.
+function backCurveHandles(p: BackBodicePoints, hasShoulderDart: boolean) {
   return {
     cRight: { x: p.C.x + (p.F.x - p.C.x) * 0.4, y: p.C.y },
     rLeft: { x: p.R.x, y: p.R.y + (p.E1.y - p.R.y) * 0.3 },
     rRight: { x: p.R.x, y: p.R.y - (p.R.y - p.O.y) * 0.3 },
+    // Armhole endpoints — continues the shoulder line's direction past E1;
+    // anticipates the O->K side-seam line's direction arriving at O.
+    e1Right: smoothHandleOut(p.E1, hasShoulderDart ? p.P2 : p.F, p.R),
+    oLeft: smoothHandleIn(p.O, p.K, p.R),
   };
 }
 
 function buildBackPath(p: BackBodicePoints, hasShoulderDart: boolean): string {
-  const { cRight, rLeft, rRight } = backCurveHandles(p);
+  const { cRight, rLeft, rRight, e1Right, oLeft } = backCurveHandles(p, hasShoulderDart);
   const shoulderSegment = hasShoulderDart
     ? `L ${fmt(p.P1.x)},${fmt(p.P1.y)} L ${fmt(p.Q.x)},${fmt(p.Q.y)} L ${fmt(p.P2.x)},${fmt(p.P2.y)} L ${fmt(p.E1.x)},${fmt(p.E1.y)} `
     : `L ${fmt(p.E1.x)},${fmt(p.E1.y)} `;
@@ -418,8 +460,8 @@ function buildBackPath(p: BackBodicePoints, hasShoulderDart: boolean): string {
     `M ${fmt(p.C.x)},${fmt(p.C.y)} ` +
     `C ${fmt(cRight.x)},${fmt(cRight.y)} ${fmt(p.F.x)},${fmt(p.F.y)} ${fmt(p.F.x)},${fmt(p.F.y)} ` +
     shoulderSegment +
-    `C ${fmt(p.E1.x)},${fmt(p.E1.y)} ${fmt(rLeft.x)},${fmt(rLeft.y)} ${fmt(p.R.x)},${fmt(p.R.y)} ` +
-    `C ${fmt(rRight.x)},${fmt(rRight.y)} ${fmt(p.O.x)},${fmt(p.O.y)} ${fmt(p.O.x)},${fmt(p.O.y)} ` +
+    `C ${fmt(e1Right.x)},${fmt(e1Right.y)} ${fmt(rLeft.x)},${fmt(rLeft.y)} ${fmt(p.R.x)},${fmt(p.R.y)} ` +
+    `C ${fmt(rRight.x)},${fmt(rRight.y)} ${fmt(oLeft.x)},${fmt(oLeft.y)} ${fmt(p.O.x)},${fmt(p.O.y)} ` +
     `L ${fmt(p.K.x)},${fmt(p.K.y)} ` +
     `L ${fmt(p.H.x)},${fmt(p.H.y)} ` +
     `L ${fmt(p.J.x)},${fmt(p.J.y)} ` +
@@ -438,8 +480,8 @@ function backLabeledPoints(p: BackBodicePoints, hasShoulderDart: boolean): { lab
 }
 
 function backBoundingBox(p: BackBodicePoints, hasShoulderDart: boolean): BBox {
-  const { cRight, rLeft, rRight } = backCurveHandles(p);
-  const points = [p.C, p.F, cRight, p.E1, p.R, rLeft, rRight, p.O, p.K, p.H, p.J, p.G1, p.BActive];
+  const { cRight, rLeft, rRight, e1Right, oLeft } = backCurveHandles(p, hasShoulderDart);
+  const points = [p.C, p.F, cRight, p.E1, p.R, rLeft, rRight, p.O, p.K, p.H, p.J, p.G1, p.BActive, e1Right, oLeft];
   if (hasShoulderDart) points.push(p.P1, p.Q, p.P2);
   return bboxOfPoints(points);
 }
