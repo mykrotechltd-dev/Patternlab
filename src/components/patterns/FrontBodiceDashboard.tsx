@@ -292,7 +292,15 @@ function frontCurveHandles(p: FrontBodicePoints) {
 
   return {
     cRight: { x: p.C.x - neckWidthPx * 0.45, y: p.C.y },
-    fLeft: { x: p.F.x, y: p.F.y + neckDepth * 0.35 },
+    // Source script has this as `F.y + neckDepth*0.35` — pulling the handle
+    // away from C rather than toward it, since F sits above C on this curve
+    // (F.y=0, C.y<0 in raw space). That overshoots past F's own position
+    // before the curve doubles back to anchor there, producing a visible
+    // loop right at F. Flipped to pull toward C instead, so the curve's
+    // tangent arriving at F continues smoothly from below rather than from
+    // above itself — confirmed by screenshot (the loop is gone, the curve
+    // flows in one direction from C up to F).
+    fLeft: { x: p.F.x, y: p.F.y - neckDepth * 0.35 },
     gRight: { x: p.G.x, y: p.G.y - distGI * 0.3 },
     iLeft: { x: p.I.x, y: p.I.y + distGI * 0.3 },
     iRight: { x: p.I.x, y: p.I.y - distIK * 0.35 },
