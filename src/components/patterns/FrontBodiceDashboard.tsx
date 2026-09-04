@@ -301,7 +301,15 @@ function frontCurveHandles(p: FrontBodicePoints) {
     // above itself — confirmed by screenshot (the loop is gone, the curve
     // flows in one direction from C up to F).
     fLeft: { x: p.F.x, y: p.F.y - neckDepth * 0.35 },
-    gRight: { x: p.G.x, y: p.G.y - distGI * 0.3 },
+    // Source script has this as a purely vertical drop (`G.y - distGI*0.3`),
+    // ignoring the angle the shoulder line (F->G) actually arrives at G on.
+    // That forces the curve to abruptly redirect straight downward right at
+    // the shoulder tip before bending toward I, reading as a bulge rather
+    // than a smooth entry (flagged with a screenshot — circled right at G).
+    // Continuing the incoming F->G line's own direction past G instead gives
+    // the curve a tangent-continuous start, the "less curvy near the join"
+    // quality of a french curve, before it bends toward I.
+    gRight: pointAtAngle(p.G, angleBetween(p.F, p.G), distGI * 0.3),
     iLeft: { x: p.I.x, y: p.I.y + distGI * 0.3 },
     iRight: { x: p.I.x, y: p.I.y - distIK * 0.35 },
     kLeft: { x: p.K.x + armscyeWidth * 0.35, y: p.K.y },
@@ -479,14 +487,15 @@ function toBackDisplayPoints(p: BackBodicePoints): BackBodicePoints {
   };
 }
 
-// Armhole endpoint handles (e1Right, oLeft) are ported from the updated back
-// script's own explicit axis-aligned formulas — previously these were
-// computed via the generic smoothHandleOut/In helpers (which aimed the
-// handle along whichever straight seam line fed into the point); the
-// updated source script instead bakes in a purely vertical offset at E1 and
-// a purely horizontal offset at O. rRight's coefficient also changed from
-// 0.3 to 0.35 to match the updated source script exactly (rLeft's 0.3 was
-// already correct and is unchanged).
+// Armhole endpoint handle at O is ported from the updated back script's own
+// explicit axis-aligned formula (a purely horizontal offset toward R).
+// rRight's coefficient also changed from 0.3 to 0.35 to match the updated
+// source script exactly (rLeft's 0.3 was already correct and is unchanged).
+// e1Right departs from the source script (see the function body) — its
+// purely vertical offset produced a bulge-then-redirect right at the
+// shoulder tip, flagged with a screenshot; it's now aimed along the
+// incoming shoulder line's own direction instead, same fix as the front
+// block's gRight.
 // IMPORTANT: `p` here must be the RAW (unflipped) points from
 // computeBackBodicePoints, not the display points — see flipRecord() above
 // (frontCurveHandles carries the full explanation of why: these formulas are
@@ -495,16 +504,23 @@ function toBackDisplayPoints(p: BackBodicePoints): BackBodicePoints {
 // uses; reapplying it directly to already-flipped points silently reverses
 // the offset direction, which is exactly what produced the self-intersecting
 // loop at R caught during screenshot verification).
-function backCurveHandles(p: BackBodicePoints) {
+function backCurveHandles(p: BackBodicePoints, hasShoulderDart: boolean) {
   const distER = Math.abs(p.E1.y - p.R.y);
   const distRO = Math.abs(p.R.y - p.O.y);
   const widthRO = Math.abs(p.O.x - p.R.x);
+
+  // Same fix as the front block's gRight — the shoulder line arriving at E1
+  // is P2->E1 when the shoulder dart is on, or F->E1 directly when it's off;
+  // continuing that direction past E1 replaces the source script's purely
+  // vertical drop, which produced the same bulge-then-redirect at E1 shown
+  // circled in the screenshot.
+  const e1Right = pointAtAngle(p.E1, angleBetween(hasShoulderDart ? p.P2 : p.F, p.E1), distER * 0.3);
 
   return {
     cRight: { x: p.C.x + (p.F.x - p.C.x) * 0.4, y: p.C.y },
     rLeft: { x: p.R.x, y: p.R.y + distER * 0.3 },
     rRight: { x: p.R.x, y: p.R.y - distRO * 0.35 },
-    e1Right: { x: p.E1.x, y: p.E1.y - distER * 0.3 },
+    e1Right,
     oLeft: { x: p.O.x - widthRO * 0.35, y: p.O.y },
   };
 }
@@ -654,7 +670,7 @@ export function FrontBodiceDashboard() {
   const backRaw = useMemo(() => computeBackBodicePoints(m), [m]);
   const backPoints = useMemo(() => toBackDisplayPoints(backRaw), [backRaw]);
   // Same raw-then-flip ordering as the front block's handles — see above.
-  const backHandles = useMemo(() => flipRecord(backCurveHandles(backRaw)), [backRaw]);
+  const backHandles = useMemo(() => flipRecord(backCurveHandles(backRaw, m.hasShoulderDart)), [backRaw, m.hasShoulderDart]);
   const backPath = useMemo(
     () => buildBackPath(backPoints, backHandles, m.hasShoulderDart),
     [backPoints, backHandles, m.hasShoulderDart]
