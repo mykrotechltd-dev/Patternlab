@@ -1,12 +1,15 @@
 "use client";
 
-// Front & back bodice draft — v2, direct port of two Adobe Illustrator
-// ExtendScript algorithms using the Helen Joseph-Armstrong construction
-// methodology (NewFront-bodice.jsx / NewBack_bodice.jsx). Replaces the
-// earlier ease-array/fit-level algorithm this file used to contain — that
-// method took no inch inputs for shoulder drop, dart rotation, etc. and had
-// no equivalent to this one's swayback/shoulder-dart toggles, so this is a
-// like-for-like swap of the whole geometry engine, not an extension of it.
+// Front & back bodice draft — v3, direct port of two Adobe Illustrator
+// ExtendScript algorithms. The front block follows the "Lety Antony"
+// methodology named in its own source docblock (NewFront-bodice.jsx); the
+// back block is a ported, updated construction script (NewBack_bodice.jsx)
+// whose own header describes it as derived from/modified against a classic
+// industry construction method — that's the source file's own attribution,
+// not this file's branding. This revision replaces the entire front-bodice
+// point set/curve construction and makes two precise formula changes to the
+// back bodice (across-back ease, explicit armhole curve handles) — see the
+// function-level comments below for exactly what changed and why.
 //
 // Everything the tool needs — measurement math, curve construction, SVG
 // export — lives in this one file by design, so it can be dropped into any
@@ -25,46 +28,51 @@ type Measurements = {
   bustSpan: number;
   shoulderWidth: number;
   shoulderDrop: number;
-  // The back script's own doc says this "matches front bodice side seam" and
-  // falls back to a direct measurement — both scripts take it as a plain
-  // input rather than deriving it, so one shared field satisfies both.
+  // The back script's own comment says this field name was "renamed from
+  // shoulderLength to unify naming across Front & Back" — both scripts'
+  // sample values already agree (5.0in), so this is one shared field rather
+  // than two separately-tracked ones.
+  shoulderSeamLength: number;
+  // Both scripts take this as a plain input rather than deriving it, so one
+  // shared field satisfies both.
   sideSeamLength: number;
   backBodiceLength: number;
 
   // Front-only
   frontBodiceLength: number;
   centerFrontLength: number;
-  shoulderSeamLength: number;
   bustDepth: number;
+  acrossChestWidth: number;
 
   // Back-only
+  // The back script's own comment says this "should be backBodiceLength -
+  // 0.5" — kept as a plain literal default here (like every other field in
+  // this file) rather than a live derived default.
   centerBackLength: number;
-  backShoulderLength: number;
   acrossBackWidthProvided: boolean;
   acrossBackWidth: number; // only read when acrossBackWidthProvided
   hasShoulderDart: boolean;
   hasSwaybackContour: boolean;
 };
 
-// The source scripts' own sample values — front's backBodiceLength (16.0)
-// and back's own backBodiceLength (16.5) disagreed slightly; 16.5 is used
-// here since the back block is the one that measurement primarily belongs to.
+// Defaults are the new source scripts' own sample values, verbatim (both
+// scripts' sample measurement objects already agree on every shared field).
 const DEFAULTS: Measurements = {
-  bust: 36,
-  waist: 28,
-  bustSpan: 7,
-  shoulderWidth: 15,
-  shoulderDrop: 1.5,
-  sideSeamLength: 8,
-  backBodiceLength: 16.5,
-  frontBodiceLength: 17,
-  centerFrontLength: 14.25,
-  shoulderSeamLength: 5,
+  bust: 42.0,
+  waist: 32.0,
+  bustSpan: 8.0,
+  shoulderWidth: 15.0,
+  shoulderDrop: 0.75,
+  shoulderSeamLength: 5.0,
+  sideSeamLength: 6.5,
+  backBodiceLength: 15.0,
+  frontBodiceLength: 18.0,
+  centerFrontLength: 14.5,
   bustDepth: 10.5,
-  centerBackLength: 15.5,
-  backShoulderLength: 4.75,
+  acrossChestWidth: 13.5,
+  centerBackLength: 14.5,
   acrossBackWidthProvided: true,
-  acrossBackWidth: 14.25,
+  acrossBackWidth: 14.0,
   hasShoulderDart: true,
   hasSwaybackContour: true,
 };
@@ -95,37 +103,6 @@ function pointAtAngle(origin: Pt, angle: number, dist: number): Pt {
 // Pythagoras — the other leg of a right triangle given the hypotenuse and one leg.
 function shortSide(hypotenuse: number, leg: number): number {
   return Math.sqrt(hypotenuse * hypotenuse - leg * leg);
-}
-
-// Both source scripts leave the armhole's two "corner" endpoints (front's E
-// and K; back's E1 and O) as plain corner points — a zero-length handle on
-// the side that touches the curve. That's fine for a straight-line-only
-// path, but here it means the curve's tangent at that endpoint isn't
-// controlled at all, so it can visibly kink against the straight seam line
-// running into it (F->E, or K->N) instead of flowing into it. These two
-// give that endpoint a real handle instead, aimed along the adjacent
-// straight segment's own direction so the curve continues it smoothly —
-// length scaled to a fraction of the curve's own chord so it looks
-// proportionate at any body size, same fraction (0.3) the file's other
-// curve handles already use.
-const SMOOTH_HANDLE_FRACTION = 0.3;
-
-// Outgoing handle for a curve that starts at `anchor`, arriving via a
-// straight line from `prevPoint` — continues that line's direction past
-// `anchor`, scaled against the curve's other endpoint `chordTo`.
-function smoothHandleOut(anchor: Pt, prevPoint: Pt, chordTo: Pt): Pt {
-  const dir = angleBetween(prevPoint, anchor);
-  const len = distance(anchor, chordTo) * SMOOTH_HANDLE_FRACTION;
-  return pointAtAngle(anchor, dir, len);
-}
-
-// Incoming handle for a curve that ends at `anchor`, continuing on via a
-// straight line to `nextPoint` — sits behind `anchor` on the reverse of that
-// line's direction, so the curve's tangent arrives already aimed that way.
-function smoothHandleIn(anchor: Pt, nextPoint: Pt, chordFrom: Pt): Pt {
-  const dir = angleBetween(anchor, nextPoint);
-  const len = distance(anchor, chordFrom) * SMOOTH_HANDLE_FRACTION;
-  return pointAtAngle(anchor, dir, -len);
 }
 
 const fmt = (n: number) => n.toFixed(2);
@@ -163,129 +140,185 @@ function flip(pt: Pt): Pt {
   return { x: pt.x, y: -pt.y };
 }
 
+// Flips every Pt-valued field of a record — used for curve-handle objects
+// (frontCurveHandles/backCurveHandles) the same way flip() is used for named
+// points. IMPORTANT: curve handles must be computed from RAW (unflipped)
+// points, in the source scripts' own Y-up coordinate space, and THEN flipped
+// via this helper — not computed by re-applying the same formula directly to
+// already-flipped points. Several of the source scripts' own handle formulas
+// are of the form `anchor.y ± k * Math.abs(anchor.y - other.y)`, and
+// whether that reads as "toward other" or "away from other" depends on which
+// of anchor/other is numerically larger — a relationship that *reverses*
+// under negation even though the visual (on-screen) direction it encodes
+// does not. Reapplying the formula to flipped points silently flips that
+// direction, producing a self-intersecting loop at the shared point instead
+// of a smooth curve (caught empirically by screenshotting the armhole at
+// point I on the front block and point R on the back block, both of which
+// showed a visible kinked loop before this was fixed). Computing handles in
+// the same raw space as their anchors, then flipping the whole handle
+// point exactly like any other point, sidesteps the issue entirely.
+function flipRecord<T extends Record<string, Pt>>(rec: T): T {
+  const entries = Object.entries(rec) as [string, Pt][];
+  return Object.fromEntries(entries.map(([key, pt]) => [key, flip(pt)])) as T;
+}
+
 // ---------------------------------------------------------------------------
-// Front bodice — direct port of NewFront-bodice.jsx
+// Front bodice — direct port of NewFront-bodice.jsx ("Lety Antony" method)
 // ---------------------------------------------------------------------------
 
 type FrontBodicePoints = {
-  A: Pt; B: Pt; C: Pt; D: Pt; E: Pt; F: Pt; G: Pt; H: Pt; I: Pt;
-  J: Pt; J1: Pt; K: Pt; L: Pt; M: Pt; N: Pt; O: Pt; P: Pt; Q: Pt;
+  A: Pt; B: Pt; C: Pt; D: Pt; F: Pt; G: Pt; H: Pt; I: Pt;
+  J: Pt; J1: Pt; K: Pt; L: Pt; M: Pt; N: Pt; P: Pt;
 };
 
 function computeFrontBodicePoints(m: Measurements): FrontBodicePoints {
-  const bust = m.bust * PT;
-  const waist = m.waist * PT;
-  const frontBodiceLength = m.frontBodiceLength * PT;
-  const backBodiceLength = m.backBodiceLength * PT;
-  const shoulderWidth = m.shoulderWidth * PT;
-  const centerFrontLength = m.centerFrontLength * PT;
-  const shoulderDrop = m.shoulderDrop * PT;
-  const shoulderSeamLength = m.shoulderSeamLength * PT;
-  const bustSpan = m.bustSpan * PT;
-  const bustDepth = m.bustDepth * PT;
-  const sideSeamLength = m.sideSeamLength * PT;
+  // Unlike computeBackBodicePoints, this source script does NOT pre-scale
+  // the whole measurements object to points up front — it keeps every field
+  // of `m` in raw inches and multiplies by PT individually, inline, at each
+  // point of use. Ported term-for-term: the armhole-ease tier check below
+  // compares `m.bust` directly against raw inch thresholds (40, 50) — do not
+  // "clean this up" into a pre-scaled m, that would silently double-scale
+  // several formulas here.
 
-  // Armhole depth logic
-  let armholeDepth: number;
-  if (m.bust < 40) armholeDepth = bust / 6 + 1.5 * PT;
-  else if (m.bust < 50) armholeDepth = bust / 6 + 2.0 * PT;
-  else armholeDepth = bust / 6 + 2.5 * PT;
-
-  // Side extension logic
-  const deltaL = (frontBodiceLength - backBodiceLength) / PT;
-  let sideExtension: number;
-  if (deltaL >= 3.0) sideExtension = 1.5 * PT;
-  else if (deltaL > 1.0) sideExtension = 1.25 * PT;
-  else sideExtension = 0;
-
-  const sideSeamHeight = frontBodiceLength - shoulderDrop - armholeDepth;
-  const dartPlacement = bustSpan / 2 - 0.5 * PT;
-
-  // The source script's origin A sat at an absolute [600,800] (placement
-  // within an 800x1000 Illustrator doc) — dropped in favor of [0,0] since
-  // every other point is defined relative to A and the display layer
-  // centers the draft itself; a pure translation, not a shape change.
+  // A: High Point Shoulder / CF top origin. Source script places this at an
+  // absolute Illustrator-canvas coordinate ([600,700]) — dropped in favor of
+  // [0,0], a pure translation, since every other point is relative to A.
   const A: Pt = { x: 0, y: 0 };
-  const B: Pt = { x: A.x, y: A.y - frontBodiceLength };
-  const C: Pt = { x: B.x, y: B.y + centerFrontLength };
-  const D: Pt = { x: A.x - shoulderWidth / 2, y: A.y };
-  const E: Pt = { x: D.x, y: D.y - shoulderDrop };
 
-  const dyF = Math.abs(A.y - E.y);
-  const dxF = shortSide(shoulderSeamLength, dyF);
-  const F: Pt = { x: E.x + dxF, y: A.y };
+  // B: Center Front waist corner.
+  const B: Pt = { x: A.x, y: A.y - m.frontBodiceLength * PT };
 
-  const G: Pt = { x: A.x, y: A.y - bustDepth };
-  const H: Pt = { x: G.x - bustSpan / 2, y: G.y };
-  const J: Pt = { x: B.x - dartPlacement, y: B.y };
-  const I: Pt = { x: B.x - bust / 4, y: B.y };
-  const K: Pt = { x: I.x, y: I.y + sideSeamHeight };
-  const L: Pt = { x: K.x, y: K.y - sideSeamLength };
-  const M: Pt = { x: L.x - sideExtension, y: L.y };
+  // C: Center Front neck pit.
+  const C: Pt = { x: A.x, y: B.y + m.centerFrontLength * PT };
 
-  const angleKM = angleBetween(K, M);
-  const N: Pt = pointAtAngle(K, angleKM, sideSeamLength);
+  // Neck width, derived geometrically from shoulder width, shoulder seam
+  // length and shoulder drop — right triangle with the shoulder seam as the
+  // hypotenuse and shoulder drop as one leg (shortSide() gives the other).
+  // Falls back to a standard 2.75in neck width if the inputs don't form a
+  // valid triangle (seam shorter than drop, producing NaN) or would produce
+  // a non-positive width.
+  let neckWidth = m.shoulderWidth / 2 - shortSide(m.shoulderSeamLength, m.shoulderDrop);
+  if (Number.isNaN(neckWidth) || neckWidth <= 0) {
+    neckWidth = 2.75; // Fallback standard neck width (source script's own fallback)
+  }
 
+  // F: Side neck / HPS corner, along the shoulder-top line through A.
+  const F: Pt = { x: A.x - neckWidth * PT, y: A.y };
+
+  // D: Top outer shoulder reference (not drawn — G is the true shoulder tip).
+  const D: Pt = { x: A.x - (m.shoulderWidth / 2) * PT, y: A.y };
+
+  // G: True outer shoulder tip, dropped from D by the shoulder-drop allowance.
+  const G: Pt = { x: D.x, y: D.y - m.shoulderDrop * PT };
+
+  // H: Bust apex.
+  const H: Pt = { x: A.x - (m.bustSpan / 2) * PT, y: A.y - m.bustDepth * PT };
+
+  // Underarm point K. Armhole ease steps up with bust size — tiers compare
+  // the RAW unscaled inch value of bust, matching the source script exactly.
+  let armholeEase: number;
+  if (m.bust >= 50.0) armholeEase = 2.5;
+  else if (m.bust >= 40.0) armholeEase = 2.0;
+  else armholeEase = 1.5;
+
+  const armholeDepth = (m.bust / 6 + armholeEase) * PT;
+  const totalVerticalDrop = m.shoulderDrop * PT + armholeDepth;
+  const K: Pt = { x: A.x - (m.bust / 4) * PT, y: A.y - totalVerticalDrop };
+
+  // I: Across-chest pitch point, vertically centered between the neck pit
+  // and the underarm point, pulled in slightly by a fixed ease allowance.
+  const midCFY = (C.y + K.y) / 2;
+  const acrossChestEase = 0.25 * PT;
+  const I: Pt = { x: A.x - (m.acrossChestWidth / 2) * PT - acrossChestEase, y: midCFY };
+
+  // Dart placement & first dart leg (J1) — the dart's placement point on the
+  // waistline, dropped 0.125in to form the first leg of the V-notch.
+  const dartPlacementDist = (m.bustSpan / 2 - 0.5) * PT;
+  const J: Pt = { x: B.x - dartPlacementDist, y: B.y };
   const J1: Pt = { x: J.x, y: J.y - 0.125 * PT };
-  const rightDartLegLength = distance(J1, H);
+  const leg1Length = distance(H, J1);
 
-  const remainingWaist = waist / 4 - dartPlacement;
+  // Side extension & waist corner N — extra side-seam allowance drafted in
+  // when the front bodice is meaningfully longer than the back (so the front
+  // hangs correctly over the bust).
+  const deltaL = m.frontBodiceLength - m.backBodiceLength; // both already inches
+  let sideExtensionVal: number;
+  if (deltaL >= 3.0) sideExtensionVal = 1.5;
+  else if (deltaL > 1.0) sideExtensionVal = 1.25;
+  else sideExtensionVal = 0.0;
+
+  const sideExtensionPt = sideExtensionVal * PT;
+  const sideSeamPt = m.sideSeamLength * PT;
+
+  const L: Pt = { x: K.x, y: K.y - sideSeamPt };
+  const M: Pt = { x: L.x - sideExtensionPt, y: L.y };
+  const angleKM = angleBetween(K, M);
+  const N: Pt = pointAtAngle(K, angleKM, sideSeamPt);
+
+  // Remaining waist distance & second dart leg (P) — the dart's second leg
+  // is drawn the same length as the first (leg1Length), angled from the bust
+  // apex toward the point on the waistline that closes the dart.
+  const remainingWaistDist = (m.waist / 4 - (m.bustSpan / 2 - 0.5)) * PT;
   const angleNJ1 = angleBetween(N, J1);
-  const O: Pt = pointAtAngle(N, angleNJ1, remainingWaist);
+  const waistAnchorForP = pointAtAngle(N, angleNJ1, remainingWaistDist);
+  const angleHAnchor = angleBetween(H, waistAnchorForP);
+  const P: Pt = pointAtAngle(H, angleHAnchor, leg1Length);
 
-  const angleHO = angleBetween(H, O);
-  const P: Pt = pointAtAngle(H, angleHO, rightDartLegLength);
-
-  const midArmholeY = E.y - (E.y - K.y) / 2;
-  const Q: Pt = { x: E.x + 0.5 * PT, y: midArmholeY };
-
-  return { A, B, C, D, E, F, G, H, I, J, J1, K, L, M, N, O, P, Q };
+  return { A, B, C, D, F, G, H, I, J, J1, K, L, M, N, P };
 }
 
 function toFrontDisplayPoints(p: FrontBodicePoints): FrontBodicePoints {
   return {
-    A: flip(p.A), B: flip(p.B), C: flip(p.C), D: flip(p.D), E: flip(p.E), F: flip(p.F),
-    G: flip(p.G), H: flip(p.H), I: flip(p.I), J: flip(p.J), J1: flip(p.J1), K: flip(p.K),
-    L: flip(p.L), M: flip(p.M), N: flip(p.N), O: flip(p.O), P: flip(p.P), Q: flip(p.Q),
+    A: flip(p.A), B: flip(p.B), C: flip(p.C), D: flip(p.D), F: flip(p.F), G: flip(p.G),
+    H: flip(p.H), I: flip(p.I), J: flip(p.J), J1: flip(p.J1), K: flip(p.K), L: flip(p.L),
+    M: flip(p.M), N: flip(p.N), P: flip(p.P),
   };
 }
 
-// The curve handles in both source scripts are all linear interpolations
-// between two named points (e.g. `C.y + (A.y - C.y) * 0.55`) rather than
-// fixed pixel offsets like the previous algorithm used — negation distributes
-// cleanly over a linear blend, so these can be computed directly from the
-// already-flipped points below with no sign correction needed (unlike the
-// old CURVE_HANDLE constants, which needed their Y offset's sign inverted
-// post-flip). Shared by buildFrontPath() and frontBoundingBox() so the two
-// never drift apart.
+// Curve handles for the neckline (C->F) and armhole (G->I->K), ported
+// directly from the source script's own explicit handle formulas — this
+// script bakes non-degenerate handles into both curve segments itself, so
+// (unlike the previous revision) no generic smooth-handle helper is needed
+// here. IMPORTANT: `p` here must be the RAW (unflipped) points from
+// computeFrontBodicePoints, not the display points — see flipRecord() above
+// for why. Callers flip the returned handles with flipRecord() before
+// building the display path/bbox.
 function frontCurveHandles(p: FrontBodicePoints) {
+  const neckDepth = Math.abs(p.F.y - p.C.y);
+  const neckWidthPx = Math.abs(p.F.x - p.C.x);
+  const distGI = Math.abs(p.G.y - p.I.y);
+  const distIK = Math.abs(p.I.y - p.K.y);
+  const armscyeWidth = Math.abs(p.K.x - p.I.x);
+
   return {
-    cRight: { x: p.C.x, y: p.C.y + (p.A.y - p.C.y) * 0.55 },
-    fLeft: { x: p.F.x + (p.A.x - p.F.x) * 0.55, y: p.F.y },
-    qLeft: { x: p.Q.x, y: p.Q.y + (p.E.y - p.Q.y) * 0.3 },
-    qRight: { x: p.Q.x, y: p.Q.y - (p.Q.y - p.K.y) * 0.3 },
-    // Armhole endpoints — see smoothHandleOut/In above. eRight continues the
-    // F->E shoulder line's own direction past E; kLeft anticipates the K->N
-    // side-seam line's direction, arriving already aimed that way.
-    eRight: smoothHandleOut(p.E, p.F, p.Q),
-    kLeft: smoothHandleIn(p.K, p.N, p.Q),
+    cRight: { x: p.C.x - neckWidthPx * 0.45, y: p.C.y },
+    fLeft: { x: p.F.x, y: p.F.y + neckDepth * 0.35 },
+    gRight: { x: p.G.x, y: p.G.y - distGI * 0.3 },
+    iLeft: { x: p.I.x, y: p.I.y + distGI * 0.3 },
+    iRight: { x: p.I.x, y: p.I.y - distIK * 0.35 },
+    kLeft: { x: p.K.x + armscyeWidth * 0.35, y: p.K.y },
   };
 }
 
-// One continuous closed outline — unlike the previous algorithm, the source
-// script welds the bust dart directly into the cutting line (P -> H -> J1 is
-// a V notch at the apex) rather than drawing it as a separate detached
-// segment, so there's only ever one path here. The script also draws a
-// second, separate "internal dart line" from H to J1 — that retraces an edge
-// already in this outline exactly, so it isn't drawn again.
-function buildFrontPath(p: FrontBodicePoints): string {
-  const { cRight, fLeft, qLeft, qRight, eRight, kLeft } = frontCurveHandles(p);
+type FrontCurveHandles = ReturnType<typeof frontCurveHandles>;
+
+// One continuous closed outline, matching the source script's own
+// pathPoints.add() call order exactly: C -> F -> G -> I -> K -> N -> P -> H
+// -> J1 -> B -> close back to C. The bust dart is welded directly into the
+// cutting line (P -> H -> J1 is a V-notch at the apex) rather than drawn as
+// a separate segment. C->F and G->I->K are curves (both endpoints carry a
+// real handle in the source script); F->G and everything from K through the
+// close back to C are plain straight lines (both endpoints left as
+// zero-length/self-referencing handles in the source).
+// `p` and `handles` must both already be display (flipped) — see flipRecord().
+function buildFrontPath(p: FrontBodicePoints, handles: FrontCurveHandles): string {
+  const { cRight, fLeft, gRight, iLeft, iRight, kLeft } = handles;
   return (
     `M ${fmt(p.C.x)},${fmt(p.C.y)} ` +
     `C ${fmt(cRight.x)},${fmt(cRight.y)} ${fmt(fLeft.x)},${fmt(fLeft.y)} ${fmt(p.F.x)},${fmt(p.F.y)} ` +
-    `L ${fmt(p.E.x)},${fmt(p.E.y)} ` +
-    `C ${fmt(eRight.x)},${fmt(eRight.y)} ${fmt(qLeft.x)},${fmt(qLeft.y)} ${fmt(p.Q.x)},${fmt(p.Q.y)} ` +
-    `C ${fmt(qRight.x)},${fmt(qRight.y)} ${fmt(kLeft.x)},${fmt(kLeft.y)} ${fmt(p.K.x)},${fmt(p.K.y)} ` +
+    `L ${fmt(p.G.x)},${fmt(p.G.y)} ` +
+    `C ${fmt(gRight.x)},${fmt(gRight.y)} ${fmt(iLeft.x)},${fmt(iLeft.y)} ${fmt(p.I.x)},${fmt(p.I.y)} ` +
+    `C ${fmt(iRight.x)},${fmt(iRight.y)} ${fmt(kLeft.x)},${fmt(kLeft.y)} ${fmt(p.K.x)},${fmt(p.K.y)} ` +
     `L ${fmt(p.N.x)},${fmt(p.N.y)} ` +
     `L ${fmt(p.P.x)},${fmt(p.P.y)} ` +
     `L ${fmt(p.H.x)},${fmt(p.H.y)} ` +
@@ -296,15 +329,15 @@ function buildFrontPath(p: FrontBodicePoints): string {
 
 function frontLabeledPoints(p: FrontBodicePoints): { label: string; pt: Pt }[] {
   return [
-    { label: "C", pt: p.C }, { label: "F", pt: p.F }, { label: "E", pt: p.E }, { label: "Q", pt: p.Q },
+    { label: "C", pt: p.C }, { label: "F", pt: p.F }, { label: "G", pt: p.G }, { label: "I", pt: p.I },
     { label: "K", pt: p.K }, { label: "N", pt: p.N }, { label: "P", pt: p.P }, { label: "H", pt: p.H },
     { label: "J1", pt: p.J1 }, { label: "B", pt: p.B },
   ];
 }
 
-function frontBoundingBox(p: FrontBodicePoints): BBox {
-  const { cRight, fLeft, qLeft, qRight, eRight, kLeft } = frontCurveHandles(p);
-  return bboxOfPoints([p.C, p.F, p.E, p.Q, p.K, p.N, p.P, p.H, p.J1, p.B, cRight, fLeft, qLeft, qRight, eRight, kLeft]);
+function frontBoundingBox(p: FrontBodicePoints, handles: FrontCurveHandles): BBox {
+  const { cRight, fLeft, gRight, iLeft, iRight, kLeft } = handles;
+  return bboxOfPoints([p.C, p.F, p.G, p.I, p.K, p.N, p.P, p.H, p.J1, p.B, cRight, fLeft, gRight, iLeft, iRight, kLeft]);
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +359,10 @@ type BackBodicePoints = {
 // becomes an explicit toggle here instead of asking for a magic zero.
 function acrossBackHalfWidth(m: Measurements, shoulderWidthPts: number): number {
   if (!m.acrossBackWidthProvided) return shoulderWidthPts / 2 - 0.25 * PT;
-  return (m.acrossBackWidth * PT) / 2;
+  // Updated source script adds a small ease allowance on the "provided"
+  // branch — previously this was just acrossBackWidth/2 with no added ease.
+  // The fallback branch above is unchanged.
+  return (m.acrossBackWidth * PT) / 2 + 0.25 * PT;
 }
 
 function computeBackBodicePoints(m: Measurements): BackBodicePoints {
@@ -335,7 +371,8 @@ function computeBackBodicePoints(m: Measurements): BackBodicePoints {
   const backBodiceLength = m.backBodiceLength * PT;
   const centerBackLength = m.centerBackLength * PT;
   const shoulderWidth = m.shoulderWidth * PT;
-  const shoulderLength = m.backShoulderLength * PT;
+  // Unified field name — see Measurements type comment.
+  const shoulderLength = m.shoulderSeamLength * PT;
   const shoulderDrop = m.shoulderDrop * PT;
   const bustSpan = m.bustSpan * PT;
   const sideSeamLength = m.sideSeamLength * PT;
@@ -434,24 +471,41 @@ function toBackDisplayPoints(p: BackBodicePoints): BackBodicePoints {
   };
 }
 
-// Same "linear interpolations survive the flip with no sign correction"
-// property as the front block — see frontCurveHandles(). `hasShoulderDart`
-// changes which point the shoulder line actually arrives at E1 from (P2 when
-// the dart is on, F when it's off), which e1Right needs to aim its handle correctly.
-function backCurveHandles(p: BackBodicePoints, hasShoulderDart: boolean) {
+// Armhole endpoint handles (e1Right, oLeft) are ported from the updated back
+// script's own explicit axis-aligned formulas — previously these were
+// computed via the generic smoothHandleOut/In helpers (which aimed the
+// handle along whichever straight seam line fed into the point); the
+// updated source script instead bakes in a purely vertical offset at E1 and
+// a purely horizontal offset at O. rRight's coefficient also changed from
+// 0.3 to 0.35 to match the updated source script exactly (rLeft's 0.3 was
+// already correct and is unchanged).
+// IMPORTANT: `p` here must be the RAW (unflipped) points from
+// computeBackBodicePoints, not the display points — see flipRecord() above
+// (frontCurveHandles carries the full explanation of why: these formulas are
+// of the form `anchor.y ± k*Math.abs(anchor.y-other.y)`, which is only
+// safe to evaluate in the same coordinate space the source script itself
+// uses; reapplying it directly to already-flipped points silently reverses
+// the offset direction, which is exactly what produced the self-intersecting
+// loop at R caught during screenshot verification).
+function backCurveHandles(p: BackBodicePoints) {
+  const distER = Math.abs(p.E1.y - p.R.y);
+  const distRO = Math.abs(p.R.y - p.O.y);
+  const widthRO = Math.abs(p.O.x - p.R.x);
+
   return {
     cRight: { x: p.C.x + (p.F.x - p.C.x) * 0.4, y: p.C.y },
-    rLeft: { x: p.R.x, y: p.R.y + (p.E1.y - p.R.y) * 0.3 },
-    rRight: { x: p.R.x, y: p.R.y - (p.R.y - p.O.y) * 0.3 },
-    // Armhole endpoints — continues the shoulder line's direction past E1;
-    // anticipates the O->K side-seam line's direction arriving at O.
-    e1Right: smoothHandleOut(p.E1, hasShoulderDart ? p.P2 : p.F, p.R),
-    oLeft: smoothHandleIn(p.O, p.K, p.R),
+    rLeft: { x: p.R.x, y: p.R.y + distER * 0.3 },
+    rRight: { x: p.R.x, y: p.R.y - distRO * 0.35 },
+    e1Right: { x: p.E1.x, y: p.E1.y - distER * 0.3 },
+    oLeft: { x: p.O.x - widthRO * 0.35, y: p.O.y },
   };
 }
 
-function buildBackPath(p: BackBodicePoints, hasShoulderDart: boolean): string {
-  const { cRight, rLeft, rRight, e1Right, oLeft } = backCurveHandles(p, hasShoulderDart);
+type BackCurveHandles = ReturnType<typeof backCurveHandles>;
+
+// `p` and `handles` must both already be display (flipped) — see flipRecord().
+function buildBackPath(p: BackBodicePoints, handles: BackCurveHandles, hasShoulderDart: boolean): string {
+  const { cRight, rLeft, rRight, e1Right, oLeft } = handles;
   const shoulderSegment = hasShoulderDart
     ? `L ${fmt(p.P1.x)},${fmt(p.P1.y)} L ${fmt(p.Q.x)},${fmt(p.Q.y)} L ${fmt(p.P2.x)},${fmt(p.P2.y)} L ${fmt(p.E1.x)},${fmt(p.E1.y)} `
     : `L ${fmt(p.E1.x)},${fmt(p.E1.y)} `;
@@ -479,8 +533,8 @@ function backLabeledPoints(p: BackBodicePoints, hasShoulderDart: boolean): { lab
   return hasShoulderDart ? [...base, { label: "P1", pt: p.P1 }, { label: "Q", pt: p.Q }, { label: "P2", pt: p.P2 }] : base;
 }
 
-function backBoundingBox(p: BackBodicePoints, hasShoulderDart: boolean): BBox {
-  const { cRight, rLeft, rRight, e1Right, oLeft } = backCurveHandles(p, hasShoulderDart);
+function backBoundingBox(p: BackBodicePoints, handles: BackCurveHandles, hasShoulderDart: boolean): BBox {
+  const { cRight, rLeft, rRight, e1Right, oLeft } = handles;
   const points = [p.C, p.F, cRight, p.E1, p.R, rLeft, rRight, p.O, p.K, p.H, p.J, p.G1, p.BActive, e1Right, oLeft];
   if (hasShoulderDart) points.push(p.P1, p.Q, p.P2);
   return bboxOfPoints(points);
@@ -581,14 +635,26 @@ export function FrontBodiceDashboard() {
 
   const frontRaw = useMemo(() => computeFrontBodicePoints(m), [m]);
   const frontPoints = useMemo(() => toFrontDisplayPoints(frontRaw), [frontRaw]);
-  const frontPath = useMemo(() => buildFrontPath(frontPoints), [frontPoints]);
-  const frontBbox = useMemo(() => frontBoundingBox(frontPoints), [frontPoints]);
+  // Curve handles are computed from the RAW points (frontCurveHandles expects
+  // the source script's own Y-up space) and then flipped the same way the
+  // named points are — see flipRecord()'s comment for why this order matters.
+  const frontHandles = useMemo(() => flipRecord(frontCurveHandles(frontRaw)), [frontRaw]);
+  const frontPath = useMemo(() => buildFrontPath(frontPoints, frontHandles), [frontPoints, frontHandles]);
+  const frontBbox = useMemo(() => frontBoundingBox(frontPoints, frontHandles), [frontPoints, frontHandles]);
   const frontView = viewBoxOf(frontBbox);
 
   const backRaw = useMemo(() => computeBackBodicePoints(m), [m]);
   const backPoints = useMemo(() => toBackDisplayPoints(backRaw), [backRaw]);
-  const backPath = useMemo(() => buildBackPath(backPoints, m.hasShoulderDart), [backPoints, m.hasShoulderDart]);
-  const backBbox = useMemo(() => backBoundingBox(backPoints, m.hasShoulderDart), [backPoints, m.hasShoulderDart]);
+  // Same raw-then-flip ordering as the front block's handles — see above.
+  const backHandles = useMemo(() => flipRecord(backCurveHandles(backRaw)), [backRaw]);
+  const backPath = useMemo(
+    () => buildBackPath(backPoints, backHandles, m.hasShoulderDart),
+    [backPoints, backHandles, m.hasShoulderDart]
+  );
+  const backBbox = useMemo(
+    () => backBoundingBox(backPoints, backHandles, m.hasShoulderDart),
+    [backPoints, backHandles, m.hasShoulderDart]
+  );
   const backView = viewBoxOf(backBbox);
 
   const zoomScale = zoom / 100;
@@ -613,7 +679,7 @@ export function FrontBodiceDashboard() {
       <div className="space-y-6 rounded-2xl border border-brand-100 bg-white p-5 shadow-sm">
         <div>
           <h2 className="font-serif text-lg font-semibold text-brand-900">Front &amp; Back Bodice Draft</h2>
-          <p className="mt-1 text-xs text-brand-400">Helen Joseph-Armstrong method — adjust measurements to redraft both blocks in real time.</p>
+          <p className="mt-1 text-xs text-brand-400">Front — Lety Antony methodology; back — an updated construction script ported alongside it. Adjust measurements to redraft both blocks in real time.</p>
         </div>
 
         <FieldGroup title="Primary circumferences">
@@ -624,21 +690,21 @@ export function FrontBodiceDashboard() {
         </FieldGroup>
 
         <FieldGroup title="Shared shape">
-          <NumberField label="Shoulder drop" value={m.shoulderDrop} min={0.5} max={3} step={0.05} onChange={(v) => set("shoulderDrop", v)} />
+          <NumberField label="Shoulder drop" value={m.shoulderDrop} min={0.25} max={3} step={0.05} onChange={(v) => set("shoulderDrop", v)} />
+          <NumberField label="Shoulder seam length" value={m.shoulderSeamLength} min={3} max={8} onChange={(v) => set("shoulderSeamLength", v)} hint="Shared by both blocks" />
           <NumberField label="Side seam length" value={m.sideSeamLength} min={3} max={12} onChange={(v) => set("sideSeamLength", v)} hint="Shared by both blocks" />
         </FieldGroup>
 
         <FieldGroup title="Front lengths">
           <NumberField label="Front bodice length" value={m.frontBodiceLength} min={12} max={22} onChange={(v) => set("frontBodiceLength", v)} />
           <NumberField label="Centre front length" value={m.centerFrontLength} min={8} max={18} onChange={(v) => set("centerFrontLength", v)} />
-          <NumberField label="Shoulder seam length" value={m.shoulderSeamLength} min={3} max={8} onChange={(v) => set("shoulderSeamLength", v)} />
           <NumberField label="Bust depth" value={m.bustDepth} min={6} max={15} onChange={(v) => set("bustDepth", v)} />
+          <NumberField label="Across-chest width" value={m.acrossChestWidth} min={8} max={20} onChange={(v) => set("acrossChestWidth", v)} />
         </FieldGroup>
 
         <FieldGroup title="Back lengths">
           <NumberField label="Back bodice length" value={m.backBodiceLength} min={10} max={20} onChange={(v) => set("backBodiceLength", v)} />
           <NumberField label="Centre back length" value={m.centerBackLength} min={8} max={20} onChange={(v) => set("centerBackLength", v)} />
-          <NumberField label="Back shoulder length" value={m.backShoulderLength} min={3} max={8} onChange={(v) => set("backShoulderLength", v)} />
         </FieldGroup>
 
         <fieldset className="space-y-3">
@@ -647,7 +713,7 @@ export function FrontBodiceDashboard() {
             label="Across-back width known"
             checked={m.acrossBackWidthProvided}
             onChange={(v) => set("acrossBackWidthProvided", v)}
-            hint={m.acrossBackWidthProvided ? undefined : "Falls back to shoulder width / 2 − 0.25in"}
+            hint={m.acrossBackWidthProvided ? "Adds 0.25in ease" : "Falls back to shoulder width / 2 − 0.25in"}
           />
           {m.acrossBackWidthProvided && (
             <NumberField label="Across-back width" value={m.acrossBackWidth} min={8} max={20} onChange={(v) => set("acrossBackWidth", v)} />
