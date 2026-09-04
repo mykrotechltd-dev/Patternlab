@@ -302,18 +302,19 @@ function frontCurveHandles(p: FrontBodicePoints) {
     // flows in one direction from C up to F).
     fLeft: { x: p.F.x, y: p.F.y - neckDepth * 0.35 },
     // Source script has this as a purely vertical drop (`G.y - distGI*0.3`),
-    // ignoring the angle the shoulder line (F->G) actually arrives at G on —
-    // flagged with a screenshot circling a bulge right at G. First attempt
-    // continued the incoming F->G direction *past* G, but F->G points away
-    // from I (down-left, away from the body) — extending that pushed the
-    // curve even further from I before it had to correct back, making the
-    // bulge worse (caught by the next screenshot, not assumed fixed).
-    // Reversed instead: the handle points from G back toward F, which — for
-    // a cubic Bezier's start handle — pulls the curve's initial tangent
-    // toward the F-G-I corner rather than away from it, giving a tight,
-    // nearly-straight departure from G before it curves to I. Confirmed
-    // clean by a third screenshot.
-    gRight: pointAtAngle(p.G, angleBetween(p.G, p.F), distGI * 0.3),
+    // flagged with a screenshot circling a bulge right at G. Two attempts
+    // using the F->G shoulder-line direction (forward, then reversed) each
+    // failed differently — the shoulder line runs nearly horizontal from G
+    // (toward F), while G->I runs nearly vertical (~85 degrees apart), so
+    // matching that line's tangent in *either* direction was always going to
+    // point away from I, just off to a different side each time (forward:
+    // bulged left past G before correcting to I; reversed: pointed back up
+    // toward F, reading as an inverted loop). Aiming the handle at the G->I
+    // chord directly sidesteps that mismatch — it's within ~5 degrees of the
+    // original vertical drop (which was never really the wrong direction),
+    // just angled very slightly toward I's actual position rather than
+    // straight down.
+    gRight: pointAtAngle(p.G, angleBetween(p.G, p.I), distGI * 0.3),
     iLeft: { x: p.I.x, y: p.I.y + distGI * 0.3 },
     iRight: { x: p.I.x, y: p.I.y - distIK * 0.35 },
     kLeft: { x: p.K.x + armscyeWidth * 0.35, y: p.K.y },
@@ -498,9 +499,10 @@ function toBackDisplayPoints(p: BackBodicePoints): BackBodicePoints {
 // e1Right departs from the source script (see the function body) — its
 // purely vertical offset produced a bulge-then-redirect right at the
 // shoulder tip, flagged with a screenshot; same fix as the front block's
-// gRight (see its comment for why the handle points back toward the
-// incoming shoulder point rather than continuing past E1 in the direction
-// the shoulder line arrives from — that made the bulge worse, not better).
+// gRight (see its comment for the full story — two attempts at matching
+// the incoming shoulder line's tangent, forward then reversed, each failed
+// differently, since that line runs roughly perpendicular to the direction
+// the curve actually needs to head in). Aimed at the E1->R chord instead.
 // IMPORTANT: `p` here must be the RAW (unflipped) points from
 // computeBackBodicePoints, not the display points — see flipRecord() above
 // (frontCurveHandles carries the full explanation of why: these formulas are
@@ -509,16 +511,12 @@ function toBackDisplayPoints(p: BackBodicePoints): BackBodicePoints {
 // uses; reapplying it directly to already-flipped points silently reverses
 // the offset direction, which is exactly what produced the self-intersecting
 // loop at R caught during screenshot verification).
-function backCurveHandles(p: BackBodicePoints, hasShoulderDart: boolean) {
+function backCurveHandles(p: BackBodicePoints) {
   const distER = Math.abs(p.E1.y - p.R.y);
   const distRO = Math.abs(p.R.y - p.O.y);
   const widthRO = Math.abs(p.O.x - p.R.x);
 
-  // Same fix as the front block's gRight — the shoulder line arriving at E1
-  // is P2->E1 when the shoulder dart is on, or F->E1 directly when it's off;
-  // the handle points from E1 back toward whichever of those fed into it,
-  // replacing the source script's purely vertical drop.
-  const e1Right = pointAtAngle(p.E1, angleBetween(p.E1, hasShoulderDart ? p.P2 : p.F), distER * 0.3);
+  const e1Right = pointAtAngle(p.E1, angleBetween(p.E1, p.R), distER * 0.3);
 
   return {
     cRight: { x: p.C.x + (p.F.x - p.C.x) * 0.4, y: p.C.y },
@@ -674,7 +672,7 @@ export function FrontBodiceDashboard() {
   const backRaw = useMemo(() => computeBackBodicePoints(m), [m]);
   const backPoints = useMemo(() => toBackDisplayPoints(backRaw), [backRaw]);
   // Same raw-then-flip ordering as the front block's handles — see above.
-  const backHandles = useMemo(() => flipRecord(backCurveHandles(backRaw, m.hasShoulderDart)), [backRaw, m.hasShoulderDart]);
+  const backHandles = useMemo(() => flipRecord(backCurveHandles(backRaw)), [backRaw]);
   const backPath = useMemo(
     () => buildBackPath(backPoints, backHandles, m.hasShoulderDart),
     [backPoints, backHandles, m.hasShoulderDart]
